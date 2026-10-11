@@ -1,22 +1,25 @@
-using System.Runtime.InteropServices;
 using System.Windows;
-using System.Windows.Interop;
+using System.Windows.Input;
 using System.Windows.Media;
 
 namespace BlueDrop
 {
     public partial class MainWindow : Window
     {
-        private const int ExtendedStyleIndex = -20;
-        private const int ToolWindowStyle = 0x80;
         private const double CursorOffset = 8;
         private static readonly TimeSpan ReopenGuard = TimeSpan.FromMilliseconds(300);
 
+        private readonly TransferStore _store;
         private DateTime _hiddenAt;
 
-        public MainWindow()
+        public MainWindow(TransferStore store)
         {
             InitializeComponent();
+
+            _store = store;
+            _store.Changed += () => Dispatcher.BeginInvoke(Refresh);
+
+            Refresh();
         }
 
         public void Toggle(Point cursor, Rect workArea)
@@ -52,9 +55,7 @@ namespace BlueDrop
         protected override void OnSourceInitialized(EventArgs e)
         {
             base.OnSourceInitialized(e);
-
-            var handle = new WindowInteropHelper(this).Handle;
-            SetWindowLongPtr(handle, ExtendedStyleIndex, GetWindowLongPtr(handle, ExtendedStyleIndex) | ToolWindowStyle);
+            WindowInterop.AddExtendedStyle(this, WindowInterop.ToolWindowStyle);
         }
 
         protected override void OnDeactivated(EventArgs e)
@@ -70,10 +71,63 @@ namespace BlueDrop
             Hide();
         }
 
-        [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
-        private static extern nint GetWindowLongPtr(nint handle, int index);
+        protected override void OnPreviewKeyDown(KeyEventArgs e)
+        {
+            base.OnPreviewKeyDown(e);
 
-        [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
-        private static extern nint SetWindowLongPtr(nint handle, int index, nint value);
+            if (e.Key == Key.Escape)
+            {
+                Hide();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.V && Keyboard.Modifiers == ModifierKeys.Control)
+            {
+                Paste();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.C && Keyboard.Modifiers == ModifierKeys.Control)
+            {
+                Get();
+                e.Handled = true;
+            }
+        }
+
+        private void OnPasteClick(object sender, RoutedEventArgs e)
+        {
+            Paste();
+        }
+
+        private void OnGetClick(object sender, RoutedEventArgs e)
+        {
+            Get();
+        }
+
+        private void Paste()
+        {
+            var item = ClipboardService.Read();
+            if (item is not null)
+            {
+                _store.Outgoing = item;
+            }
+        }
+
+        private void Get()
+        {
+            var item = _store.Incoming;
+            if (item is not null && ClipboardService.Write(item))
+            {
+                _store.MarkIncomingTaken();
+                Hide();
+            }
+        }
+
+        private void Refresh()
+        {
+            var incoming = _store.Incoming;
+
+            OutgoingPreview.Text = _store.Outgoing?.Preview;
+            IncomingPreview.Text = incoming?.Preview;
+            GetButton.IsEnabled = incoming is not null;
+        }
     }
 }

@@ -10,7 +10,35 @@
         ShowInTaskbar="False" Topmost="True"
         WindowStartupLocation="Manual"
         Background="#202020" BorderBrush="#3D3D3D" BorderThickness="1">
-    <Grid>
-
+    <Window.Resources>
+        <Style x:Key="TileTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style x:Key="TilePreview" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#A0A0A0" />
+            <Setter Property="Margin" Value="0,8,0,0" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+    </Window.Resources>
+    <Grid Margin="8">
+        <Grid.RowDefinitions>
+            <RowDefinition />
+            <RowDefinition Height="8" />
+            <RowDefinition />
+        </Grid.RowDefinitions>
+        <Button x:Name="PasteButton" Grid.Row="0" Style="{StaticResource TileButton}" Click="OnPasteClick">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Top" Style="{StaticResource TileTitle}" Text="Paste" />
+                <TextBlock x:Name="OutgoingPreview" Style="{StaticResource TilePreview}" />
+            </DockPanel>
+        </Button>
+        <Button x:Name="GetButton" Grid.Row="2" Style="{StaticResource TileButton}" Click="OnGetClick" IsEnabled="False">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Top" Style="{StaticResource TileTitle}" Text="Get" />
+                <TextBlock x:Name="IncomingPreview" Style="{StaticResource TilePreview}" />
+            </DockPanel>
+        </Button>
     </Grid>
 </Window>
