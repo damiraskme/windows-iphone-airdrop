@@ -25,6 +25,10 @@ namespace BlueDrop
 
         public bool SoundEnabled { get; set; }
 
+        public bool SaveFiles { get; set; }
+
+        public string? SaveFolder { get; set; }
+
         public bool ClearAfterFetch { get; set; }
 
         public int HotkeyModifiers { get; set; } = DefaultHotkeyModifiers;
@@ -32,6 +36,8 @@ namespace BlueDrop
         public int HotkeyKey { get; set; } = DefaultHotkeyKey;
 
         public int Port { get; set; } = 5055;
+
+        public bool AllowNetwork { get; set; }
 
         public static AppSettings Load()
         {

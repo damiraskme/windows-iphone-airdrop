@@ -9,22 +9,19 @@ namespace BlueDrop
     {
         private readonly MainWindow _window;
         private readonly TransferStore _store;
-        private readonly Func<SettingsWindow> _createSettingsWindow;
         private readonly Icon _icon;
         private readonly Icon _pendingIcon;
         private readonly Forms.NotifyIcon _notifyIcon;
-        private SettingsWindow? _settingsWindow;
 
-        public TrayIcon(MainWindow window, TransferStore store, Func<SettingsWindow> createSettingsWindow)
+        public TrayIcon(MainWindow window, TransferStore store, SettingsLauncher settingsLauncher)
         {
             _window = window;
             _store = store;
-            _createSettingsWindow = createSettingsWindow;
             _icon = CreateIcon(false);
             _pendingIcon = CreateIcon(true);
 
             var menu = new Forms.ContextMenuStrip();
-            menu.Items.Add("Settings", null, (_, _) => OpenSettings());
+            menu.Items.Add("Settings", null, (_, _) => settingsLauncher.Open());
             menu.Items.Add("Exit", null, (_, _) => System.Windows.Application.Current.Shutdown());
 
             _notifyIcon = new Forms.NotifyIcon
@@ -55,18 +52,6 @@ namespace BlueDrop
                 var workArea = Forms.Screen.FromPoint(cursor).WorkingArea;
                 _window.Toggle(new System.Windows.Point(cursor.X, cursor.Y), new System.Windows.Rect(workArea.X, workArea.Y, workArea.Width, workArea.Height));
             }
-        }
-
-        private void OpenSettings()
-        {
-            if (_settingsWindow is null)
-            {
-                _settingsWindow = _createSettingsWindow();
-                _settingsWindow.Closed += (_, _) => _settingsWindow = null;
-                _settingsWindow.Show();
-            }
-
-            _settingsWindow.Activate();
         }
 
         private void UpdateIcon()

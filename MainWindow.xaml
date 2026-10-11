@@ -5,36 +5,41 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:BlueDrop"
         mc:Ignorable="d"
-        Height="320" Width="220"
+        Height="230" Width="170"
         WindowStyle="None" ResizeMode="NoResize"
         ShowInTaskbar="False" Topmost="True"
         WindowStartupLocation="Manual"
         Background="#202020" BorderBrush="#3D3D3D" BorderThickness="1">
     <Window.Resources>
         <Style x:Key="TileTitle" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="16" />
+            <Setter Property="FontSize" Value="14" />
             <Setter Property="FontWeight" Value="SemiBold" />
         </Style>
         <Style x:Key="TilePreview" TargetType="TextBlock">
             <Setter Property="Foreground" Value="#A0A0A0" />
-            <Setter Property="Margin" Value="0,8,0,0" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Margin" Value="0,6,0,0" />
             <Setter Property="TextWrapping" Value="Wrap" />
             <Setter Property="TextTrimming" Value="CharacterEllipsis" />
         </Style>
     </Window.Resources>
-    <Grid Margin="8">
+    <Grid Margin="8,6,8,8">
         <Grid.RowDefinitions>
+            <RowDefinition Height="20" />
+            <RowDefinition Height="6" />
             <RowDefinition />
-            <RowDefinition Height="8" />
+            <RowDefinition Height="6" />
             <RowDefinition />
         </Grid.RowDefinitions>
-        <Button x:Name="PasteButton" Grid.Row="0" Style="{StaticResource TileButton}" Click="OnPasteClick">
+        <Button Grid.Row="0" Style="{StaticResource IconButton}" Width="20" Height="20" HorizontalAlignment="Right"
+                Content="&#xE713;" Click="OnSettingsClick" />
+        <Button x:Name="PasteButton" Grid.Row="2" Style="{StaticResource TileButton}" Padding="10" Click="OnPasteClick">
             <DockPanel>
                 <TextBlock DockPanel.Dock="Top" Style="{StaticResource TileTitle}" Text="Paste" />
                 <TextBlock x:Name="OutgoingPreview" Style="{StaticResource TilePreview}" />
             </DockPanel>
         </Button>
-        <Button x:Name="GetButton" Grid.Row="2" Style="{StaticResource TileButton}" Click="OnGetClick" IsEnabled="False">
+        <Button x:Name="GetButton" Grid.Row="4" Style="{StaticResource TileButton}" Padding="10" Click="OnGetClick" IsEnabled="False">
             <DockPanel>
                 <TextBlock DockPanel.Dock="Top" Style="{StaticResource TileTitle}" Text="Get" />
                 <TextBlock x:Name="IncomingPreview" Style="{StaticResource TilePreview}" />

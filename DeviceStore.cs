@@ -28,11 +28,10 @@ namespace BlueDrop
         public string Add(string name)
         {
             var key = Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(KeyBytes));
-            var device = new PairedDevice(Guid.NewGuid().ToString("N"), name, Convert.ToBase64String(Hash(key)), DateTime.UtcNow);
 
             lock (_sync)
             {
-                _devices.Add(device);
+                _devices.Add(new PairedDevice(Guid.NewGuid().ToString("N"), UniqueName(name), Convert.ToBase64String(Hash(key)), DateTime.UtcNow));
                 Save();
             }
 
@@ -106,6 +105,23 @@ namespace BlueDrop
 
                 return true;
             }
+        }
+
+        private string UniqueName(string name)
+        {
+            if (name.Length == 0)
+            {
+                return name;
+            }
+
+            var unique = name;
+
+            for (var index = 1; _devices.Any(device => string.Equals(device.Name, unique, StringComparison.OrdinalIgnoreCase)); index++)
+            {
+                unique = $"{name} ({index})";
+            }
+
+            return unique;
         }
 
         private static byte[] Hash(string key)

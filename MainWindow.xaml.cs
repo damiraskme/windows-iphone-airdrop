@@ -10,12 +10,14 @@ namespace BlueDrop
         private static readonly TimeSpan ReopenGuard = TimeSpan.FromMilliseconds(300);
 
         private readonly TransferStore _store;
+        private readonly SettingsLauncher _settingsLauncher;
         private DateTime _hiddenAt;
 
-        public MainWindow(TransferStore store)
+        public MainWindow(TransferStore store, SettingsLauncher settingsLauncher)
         {
             InitializeComponent();
 
+            _settingsLauncher = settingsLauncher;
             _store = store;
             _store.Changed += () => Dispatcher.BeginInvoke(Refresh);
 
@@ -90,6 +92,12 @@ namespace BlueDrop
                 Get();
                 e.Handled = true;
             }
+        }
+
+        private void OnSettingsClick(object sender, RoutedEventArgs e)
+        {
+            Hide();
+            _settingsLauncher.Open();
         }
 
         private void OnPasteClick(object sender, RoutedEventArgs e)

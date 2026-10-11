@@ -41,15 +41,19 @@ namespace BlueDrop
             return new TransferItem(TransferKind.Text, string.Empty, "text/plain", Text: text);
         }
 
-        public static TransferItem FromImage(string name, string contentType, byte[] data)
+        public static TransferItem FromImage(string name, string contentType, byte[] data, string? path = null)
         {
-            return new TransferItem(TransferKind.Image, name, contentType, Data: data);
+            return new TransferItem(TransferKind.Image, name, contentType, Data: data, FilePath: path);
         }
 
         public static TransferItem FromFile(string path)
         {
-            var contentType = ContentTypes.TryGetContentType(path, out var known) ? known : DefaultContentType;
-            return new TransferItem(TransferKind.File, Path.GetFileName(path), contentType, FilePath: path);
+            return new TransferItem(TransferKind.File, Path.GetFileName(path), ContentTypeOf(path), FilePath: path);
+        }
+
+        public static string ContentTypeOf(string path)
+        {
+            return ContentTypes.TryGetContentType(path, out var known) ? known : DefaultContentType;
         }
     }
 }

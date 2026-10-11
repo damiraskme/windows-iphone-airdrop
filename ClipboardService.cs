@@ -9,6 +9,7 @@ namespace BlueDrop
     {
         private const string ImageName = "image.png";
         private const string ImageContentType = "image/png";
+        private const string PngFormat = "PNG";
 
         public static TransferItem? Read()
         {
@@ -30,6 +31,11 @@ namespace BlueDrop
                     {
                         return TransferItem.FromText(text);
                     }
+                }
+
+                if (Clipboard.GetData(PngFormat) is MemoryStream png)
+                {
+                    return TransferItem.FromImage(ImageName, ImageContentType, png.ToArray());
                 }
 
                 if (Clipboard.ContainsImage())
@@ -58,7 +64,15 @@ namespace BlueDrop
                         Clipboard.SetText(item.Text!);
                         break;
                     case TransferKind.Image:
-                        Clipboard.SetImage(DecodeImage(item.Data!));
+                        var data = new DataObject();
+                        data.SetImage(DecodeImage(item.Data!));
+
+                        if (PrepareImageFile(item) is { } path)
+                        {
+                            data.SetFileDropList([path]);
+                        }
+
+                        Clipboard.SetDataObject(data, true);
                         break;
                     case TransferKind.File:
                         Clipboard.SetFileDropList([item.FilePath!]);
@@ -70,6 +84,26 @@ namespace BlueDrop
             catch (Exception e) when (e is COMException or NotSupportedException or FileFormatException)
             {
                 return false;
+            }
+        }
+
+        private static string? PrepareImageFile(TransferItem item)
+        {
+            if (File.Exists(item.FilePath))
+            {
+                return item.FilePath;
+            }
+
+            try
+            {
+                var path = Path.Combine(AppPaths.TempDirectory, item.Name);
+                Directory.CreateDirectory(AppPaths.TempDirectory);
+                File.WriteAllBytes(path, item.Data!);
+                return path;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                return null;
             }
         }
 

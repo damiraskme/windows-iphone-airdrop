@@ -2,9 +2,14 @@ bin/
 obj/
 .vs/
 .idea/
+Properties/PublishProfiles/
 *.user
 *.suo
 
 Local/
 *.pfx
 *.key
+*.cer
+*.crt
+*.pem
+*.mobileconfig

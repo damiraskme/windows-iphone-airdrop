@@ -27,26 +27,27 @@ namespace BlueDrop
                 return;
             }
 
+            AppPaths.ClearTempDirectory();
+
             var settings = AppSettings.Load();
             var store = new TransferStore();
             var devices = new DeviceStore();
             var pairing = new PairingService(devices);
             var hotkeys = new HotkeyService(store);
-            var server = new TransferServer(store, devices, pairing, settings);
+            var certificates = new CertificateAuthority();
+            var server = new TransferServer(store, devices, pairing, settings, certificates);
 
             hotkeys.Apply(settings.HotkeyModifiers, settings.HotkeyKey);
 
             _hotkeys = hotkeys;
             _server = server;
             _notifier = new ReceivedNotifier(store, settings);
-            _trayIcon = new TrayIcon(
-                new MainWindow(store),
-                store,
-                () => new SettingsWindow(settings, devices, pairing, hotkeys, server));
+            var settingsLauncher = new SettingsLauncher(() => new SettingsWindow(settings, devices, pairing, hotkeys, server, certificates));
+            _trayIcon = new TrayIcon(new MainWindow(store, settingsLauncher), store, settingsLauncher);
 
             try
             {
-                await server.StartAsync(settings.Port);
+                await server.StartAsync(settings.Port, settings.AllowNetwork);
             }
             catch (IOException)
             {
@@ -59,6 +60,8 @@ namespace BlueDrop
             {
                 Task.Run(_server.StopAsync).Wait(StopTimeout);
             }
+
+            AppPaths.ClearTempDirectory();
 
             _hotkeys?.Dispose();
             _trayIcon?.Dispose();

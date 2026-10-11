@@ -47,6 +47,13 @@
             </DockPanel>
             <CheckBox x:Name="AutoCopyCheckBox" Content="Copy automatically" Click="OnOptionClick" />
             <CheckBox x:Name="SoundCheckBox" Content="Sound on receive" Click="OnOptionClick" />
+            <CheckBox x:Name="SaveFilesCheckBox" Content="Save received files" Click="OnOptionClick" />
+            <DockPanel x:Name="SaveFolderRow" Margin="0,0,0,12">
+                <Button DockPanel.Dock="Right" Style="{StaticResource TileButton}" Padding="12,3" Margin="8,0,0,0" Click="OnBrowseClick">
+                    <TextBlock Text="Browse" />
+                </Button>
+                <TextBox x:Name="SaveFolderBox" IsReadOnly="True" />
+            </DockPanel>
             <CheckBox x:Name="ClearAfterFetchCheckBox" Content="Clear after fetching" Click="OnOptionClick"
                       ToolTip="Removes the pasted item from this app once the phone has fetched it. The Windows clipboard is not changed." />
             <DockPanel Margin="0,0,0,12">
@@ -54,14 +61,28 @@
                 <TextBlock Style="{StaticResource FieldLabel}" Text="Paste hotkey" />
             </DockPanel>
             <CheckBox x:Name="AutoStartCheckBox" Content="Start with Windows" Click="OnAutoStartClick" />
+            <CheckBox x:Name="AllowNetworkCheckBox" Content="Allow phone connections" Click="OnAllowNetworkClick" />
             <DockPanel>
                 <TextBox x:Name="PortBox" DockPanel.Dock="Right" Width="80" LostKeyboardFocus="OnPortCommit" KeyDown="OnFieldKeyDown" />
                 <TextBlock Style="{StaticResource FieldLabel}" Text="Port" />
             </DockPanel>
             <TextBlock Text="Paired devices" Foreground="#FFFFFF" FontWeight="SemiBold" Margin="0,24,0,8" />
+            <Button Style="{StaticResource TileButton}" Height="36" Padding="0" Margin="0,0,0,8" Click="OnCertificateClick">
+                <TextBlock Text="Install certificate" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Button>
+            <StackPanel x:Name="CertificatePanel" Margin="0,0,0,8" Visibility="Collapsed">
+                <Border Background="#FFFFFF" Padding="8" HorizontalAlignment="Center">
+                    <Image x:Name="CertificateQrImage" Width="180" Height="180" RenderOptions.BitmapScalingMode="NearestNeighbor" />
+                </Border>
+                <TextBlock x:Name="FingerprintText" Foreground="#A0A0A0" FontSize="11" FontFamily="Consolas" TextWrapping="Wrap"
+                           TextAlignment="Center" Margin="0,8,0,0" />
+            </StackPanel>
             <Button Style="{StaticResource TileButton}" Height="36" Padding="0" Click="OnPairClick">
                 <TextBlock x:Name="PairLabel" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Button>
+            <Border x:Name="QrBorder" Background="#FFFFFF" Padding="8" Margin="0,8,0,0" HorizontalAlignment="Center" Visibility="Collapsed">
+                <Image x:Name="QrImage" Width="180" Height="180" RenderOptions.BitmapScalingMode="NearestNeighbor" />
+            </Border>
             <ItemsControl x:Name="DeviceList" Margin="0,8,0,0">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>

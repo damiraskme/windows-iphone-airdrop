@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
+using Microsoft.Win32;
 
 namespace BlueDrop
 {
@@ -23,11 +24,13 @@ namespace BlueDrop
         private readonly PairingService _pairing;
         private readonly HotkeyService _hotkeys;
         private readonly TransferServer _server;
+        private readonly CertificateAuthority _certificates;
         private readonly DispatcherTimer _pairingTimer;
         private readonly Action _onDevicesChanged;
         private readonly Action _onPairingChanged;
+        private readonly Action _onCertificateRejected;
 
-        public SettingsWindow(AppSettings settings, DeviceStore devices, PairingService pairing, HotkeyService hotkeys, TransferServer server)
+        public SettingsWindow(AppSettings settings, DeviceStore devices, PairingService pairing, HotkeyService hotkeys, TransferServer server, CertificateAuthority certificates)
         {
             InitializeComponent();
 
@@ -36,11 +39,14 @@ namespace BlueDrop
             _pairing = pairing;
             _hotkeys = hotkeys;
             _server = server;
+            _certificates = certificates;
 
             _onDevicesChanged = () => Dispatcher.BeginInvoke(RefreshDevices);
             _onPairingChanged = () => Dispatcher.BeginInvoke(RefreshPairing);
+            _onCertificateRejected = () => Dispatcher.BeginInvoke(ShowCertificateForPairing);
             _devices.Changed += _onDevicesChanged;
             _pairing.Changed += _onPairingChanged;
+            _server.CertificateRejected += _onCertificateRejected;
 
             _pairingTimer = new DispatcherTimer { Interval = PairingService.CodeLifetime };
             _pairingTimer.Tick += (_, _) =>
@@ -53,8 +59,12 @@ namespace BlueDrop
             HideContentCheckBox.IsChecked = settings.HidePopupContent;
             AutoCopyCheckBox.IsChecked = settings.AutoCopy;
             SoundCheckBox.IsChecked = settings.SoundEnabled;
+            SaveFilesCheckBox.IsChecked = settings.SaveFiles;
+            SaveFolderRow.IsEnabled = settings.SaveFiles;
+            SaveFolderBox.Text = CurrentSaveFolder;
             ClearAfterFetchCheckBox.IsChecked = settings.ClearAfterFetch;
             AutoStartCheckBox.IsChecked = AutoStart.IsEnabled;
+            AllowNetworkCheckBox.IsChecked = settings.AllowNetwork;
             DurationBox.Text = settings.PopupSeconds.ToString();
             PortBox.Text = settings.Port.ToString();
             HotkeyBox.Text = HotkeyService.Format(settings.HotkeyModifiers, settings.HotkeyKey);
@@ -62,6 +72,8 @@ namespace BlueDrop
             RefreshDevices();
             RefreshPairing();
         }
+
+        private string CurrentSaveFolder => string.IsNullOrWhiteSpace(_settings.SaveFolder) ? AppPaths.DefaultSaveDirectory : _settings.SaveFolder;
 
         protected override void OnSourceInitialized(EventArgs e)
         {
@@ -74,6 +86,7 @@ namespace BlueDrop
             _pairingTimer.Stop();
             _devices.Changed -= _onDevicesChanged;
             _pairing.Changed -= _onPairingChanged;
+            _server.CertificateRejected -= _onCertificateRejected;
             base.OnClosed(e);
         }
 
@@ -83,8 +96,22 @@ namespace BlueDrop
             _settings.HidePopupContent = HideContentCheckBox.IsChecked == true;
             _settings.AutoCopy = AutoCopyCheckBox.IsChecked == true;
             _settings.SoundEnabled = SoundCheckBox.IsChecked == true;
+            _settings.SaveFiles = SaveFilesCheckBox.IsChecked == true;
             _settings.ClearAfterFetch = ClearAfterFetchCheckBox.IsChecked == true;
             _settings.Save();
+
+            SaveFolderRow.IsEnabled = _settings.SaveFiles;
+        }
+
+        private void OnBrowseClick(object sender, RoutedEventArgs e)
+        {
+            var dialog = new OpenFolderDialog { InitialDirectory = CurrentSaveFolder };
+            if (dialog.ShowDialog(this) == true)
+            {
+                _settings.SaveFolder = dialog.FolderName;
+                _settings.Save();
+                SaveFolderBox.Text = CurrentSaveFolder;
+            }
         }
 
         private void OnAutoStartClick(object sender, RoutedEventArgs e)
@@ -121,7 +148,8 @@ namespace BlueDrop
             {
                 PortBox.IsEnabled = false;
 
-                if (await _server.TryRestartAsync(port))
+                if ((!_settings.AllowNetwork || await Firewall.AllowAsync(port))
+                    && await _server.TryRestartAsync(port, _settings.AllowNetwork))
                 {
                     _settings.Port = port;
                     _settings.Save();
@@ -131,6 +159,24 @@ namespace BlueDrop
             }
 
             PortBox.Text = _settings.Port.ToString();
+            RefreshPairing();
+            RefreshCertificate();
+        }
+
+        private async void OnAllowNetworkClick(object sender, RoutedEventArgs e)
+        {
+            var allow = AllowNetworkCheckBox.IsChecked == true;
+            AllowNetworkCheckBox.IsEnabled = false;
+
+            if ((!allow || await Firewall.AllowAsync(_settings.Port))
+                && await _server.TryRestartAsync(_settings.Port, allow))
+            {
+                _settings.AllowNetwork = allow;
+                _settings.Save();
+            }
+
+            AllowNetworkCheckBox.IsChecked = _settings.AllowNetwork;
+            AllowNetworkCheckBox.IsEnabled = true;
         }
 
         private void OnHotkeyKeyDown(object sender, KeyEventArgs e)
@@ -175,8 +221,15 @@ namespace BlueDrop
             HotkeyBox.Text = HotkeyService.Format(modifiers, key);
         }
 
+        private void OnCertificateClick(object sender, RoutedEventArgs e)
+        {
+            CertificatePanel.Visibility = CertificatePanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+            RefreshCertificate();
+        }
+
         private void OnPairClick(object sender, RoutedEventArgs e)
         {
+            CertificatePanel.Visibility = Visibility.Collapsed;
             _pairingTimer.Stop();
             _pairing.BeginPairing();
             _pairingTimer.Start();
@@ -203,6 +256,38 @@ namespace BlueDrop
         {
             var code = _pairing.ActiveCode;
             PairLabel.Text = code is null ? PairText : code.Insert(CodeGroupLength, " ");
+
+            if (code is null)
+            {
+                QrBorder.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            QrImage.Source = QrCode.Create($"https://{CertificateAuthority.LocalHostName}:{_settings.Port}/pair?code={code}");
+            QrBorder.Visibility = Visibility.Visible;
+        }
+
+        private void ShowCertificateForPairing()
+        {
+            if (_pairing.ActiveCode is null)
+            {
+                return;
+            }
+
+            QrBorder.Visibility = Visibility.Collapsed;
+            CertificatePanel.Visibility = Visibility.Visible;
+            RefreshCertificate();
+        }
+
+        private void RefreshCertificate()
+        {
+            if (CertificatePanel.Visibility != Visibility.Visible)
+            {
+                return;
+            }
+
+            CertificateQrImage.Source = QrCode.Create(TransferServer.ProfileUrl(_settings.Port));
+            FingerprintText.Text = _certificates.Fingerprint;
         }
 
         private void RefreshDevices()
