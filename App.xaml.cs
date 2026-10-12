@@ -2,7 +2,7 @@ using System.IO;
 using System.Reflection;
 using System.Windows;
 
-namespace BlueDrop
+namespace ClipboardPhonePc
 {
     public partial class App : Application
     {
@@ -27,6 +27,11 @@ namespace BlueDrop
                 return;
             }
 
+            DispatcherUnhandledException += (_, args) => AppLog.Error("Unhandled error", args.Exception);
+            AppDomain.CurrentDomain.UnhandledException += (_, args) => AppLog.Error("Unhandled error", args.ExceptionObject as Exception);
+            TaskScheduler.UnobservedTaskException += (_, args) => AppLog.Error("Unhandled background error", args.Exception);
+
+            AppLog.Info($"{AppName} {Assembly.GetExecutingAssembly().GetName().Version} started");
             AppPaths.ClearTempDirectory();
 
             var settings = AppSettings.Load();
@@ -37,13 +42,21 @@ namespace BlueDrop
             var certificates = new CertificateAuthority();
             var server = new TransferServer(store, devices, pairing, settings, certificates);
 
-            hotkeys.Apply(settings.HotkeyModifiers, settings.HotkeyKey);
+            if (!hotkeys.Apply(settings.HotkeyModifiers, settings.HotkeyKey))
+            {
+                AppStatus.Report(StatusIssue.Hotkey, string.Format(AppStatus.HotkeyTaken, HotkeyService.Format(settings.HotkeyModifiers, settings.HotkeyKey)));
+            }
 
             _hotkeys = hotkeys;
             _server = server;
-            _notifier = new ReceivedNotifier(store, settings);
+            _notifier = new ReceivedNotifier(store, settings, pairing);
             var settingsLauncher = new SettingsLauncher(() => new SettingsWindow(settings, devices, pairing, hotkeys, server, certificates));
             _trayIcon = new TrayIcon(new MainWindow(store, settingsLauncher), store, settingsLauncher);
+
+            if (certificates.Replaced)
+            {
+                _notifier.ShowMessage(AppStatus.CertificateReplaced);
+            }
 
             try
             {
@@ -51,6 +64,12 @@ namespace BlueDrop
             }
             catch (IOException)
             {
+                return;
+            }
+
+            if (settings.AllowNetwork && !await Firewall.IsCurrentAsync(settings.Port))
+            {
+                AppStatus.Report(StatusIssue.Firewall, AppStatus.FirewallOutdated);
             }
         }
 
@@ -62,6 +81,7 @@ namespace BlueDrop
             }
 
             AppPaths.ClearTempDirectory();
+            AppLog.Info($"{AppName} exited");
 
             _hotkeys?.Dispose();
             _trayIcon?.Dispose();

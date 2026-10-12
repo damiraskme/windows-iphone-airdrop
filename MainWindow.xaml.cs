@@ -2,7 +2,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 
-namespace BlueDrop
+namespace ClipboardPhonePc
 {
     public partial class MainWindow : Window
     {

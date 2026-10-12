@@ -1,7 +1,4 @@
-using System.IO;
-using System.Text.Json;
-
-namespace BlueDrop
+namespace ClipboardPhonePc
 {
     public sealed class AppSettings
     {
@@ -12,8 +9,6 @@ namespace BlueDrop
 
         private const int DefaultHotkeyModifiers = 3;
         private const int DefaultHotkeyKey = 0x56;
-
-        private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
         public bool PopupEnabled { get; set; } = true;
 
@@ -39,25 +34,30 @@ namespace BlueDrop
 
         public bool AllowNetwork { get; set; }
 
+        public int MaxFileMegabytes { get; set; } = 8192;
+
         public static AppSettings Load()
         {
-            if (!File.Exists(AppPaths.SettingsFile))
-            {
-                return new AppSettings();
-            }
+            var settings = JsonFile.Load<AppSettings>(AppPaths.SettingsFile, out var state) ?? new AppSettings();
 
-            var json = File.ReadAllText(AppPaths.SettingsFile);
-            var settings = string.IsNullOrWhiteSpace(json) ? new AppSettings() : JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+            if (state == JsonFileState.Restored)
+            {
+                AppStatus.Report(StatusIssue.Settings, AppStatus.SettingsRestored);
+            }
+            else if (state == JsonFileState.Damaged)
+            {
+                AppStatus.Report(StatusIssue.Settings, AppStatus.SettingsReset);
+            }
 
             settings.PopupSeconds = Math.Clamp(settings.PopupSeconds, MinPopupSeconds, MaxPopupSeconds);
             settings.Port = Math.Clamp(settings.Port, MinPort, MaxPort);
+            settings.MaxFileMegabytes = Math.Max(settings.MaxFileMegabytes, 1);
             return settings;
         }
 
         public void Save()
         {
-            Directory.CreateDirectory(AppPaths.DataDirectory);
-            File.WriteAllText(AppPaths.SettingsFile, JsonSerializer.Serialize(this, JsonOptions));
+            JsonFile.Save(AppPaths.SettingsFile, this);
         }
     }
 }

@@ -1,4 +1,4 @@
-<Window x:Class="BlueDrop.SettingsWindow"
+<Window x:Class="ClipboardPhonePc.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Settings"
@@ -72,7 +72,7 @@
             </Button>
             <StackPanel x:Name="CertificatePanel" Margin="0,0,0,8" Visibility="Collapsed">
                 <Border Background="#FFFFFF" Padding="8" HorizontalAlignment="Center">
-                    <Image x:Name="CertificateQrImage" Width="180" Height="180" RenderOptions.BitmapScalingMode="NearestNeighbor" />
+                    <Image x:Name="CertificateQrImage" MaxWidth="276" RenderOptions.BitmapScalingMode="HighQuality" />
                 </Border>
                 <TextBlock x:Name="FingerprintText" Foreground="#A0A0A0" FontSize="11" FontFamily="Consolas" TextWrapping="Wrap"
                            TextAlignment="Center" Margin="0,8,0,0" />

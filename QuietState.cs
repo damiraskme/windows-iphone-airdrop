@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace BlueDrop
+namespace ClipboardPhonePc
 {
     public static class QuietState
     {

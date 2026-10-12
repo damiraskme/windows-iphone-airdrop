@@ -1,68 +1,58 @@
 using System.IO;
 using System.Net;
+using System.Net.Security;
 using System.Text;
-using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.AspNetCore.Server.Kestrel.Https;
 using Microsoft.Extensions.Logging;
 
-namespace BlueDrop
+namespace ClipboardPhonePc
 {
-    public sealed record PairRequest(string? Name);
-
     public sealed class TransferServer
     {
         private const string TextContentType = "text/plain";
-        private const string FallbackFileName = "file";
-        private const string FallbackImageName = "image";
-        private const string BearerPrefix = "Bearer ";
         private const string CertificatePath = "/certificate.cer";
         private const string CertificateContentType = "application/x-x509-ca-cert";
         private const string ProfilePath = "/certificate.mobileconfig";
         private const string ProfileContentType = "application/x-apple-aspen-config";
-        private const long MaxPairBodyBytes = 4096;
-        private const int MaxDeviceNameLength = 64;
-        private const long MaxClipboardImageBytes = 64 * 1024 * 1024;
+        private const long BytesPerMegabyte = 1024 * 1024;
+        private const long MaxTextBytes = 8 * BytesPerMegabyte;
 
-        private static readonly Dictionary<string, string> ClipboardImageExtensions = new()
-        {
-            ["image/png"] = ".png",
-            ["image/jpeg"] = ".jpg",
-            ["image/gif"] = ".gif",
-            ["image/bmp"] = ".bmp",
-            ["image/tiff"] = ".tif"
-        };
-
+        private static readonly TimeSpan RejectionGrace = TimeSpan.FromSeconds(2);
         private static readonly object OfferedKey = new();
         private static readonly object SecuredKey = new();
 
         private readonly TransferStore _store;
-        private readonly DeviceStore _devices;
-        private readonly PairingService _pairing;
         private readonly AppSettings _settings;
         private readonly CertificateAuthority _certificates;
+        private readonly DeviceAccess _access;
+        private readonly FileReceiver _receiver;
         private WebApplication? _app;
         private int _port;
         private bool _allowNetwork;
+        private long _securedAt = long.MinValue / 2;
 
         public TransferServer(TransferStore store, DeviceStore devices, PairingService pairing, AppSettings settings, CertificateAuthority certificates)
         {
             _store = store;
-            _devices = devices;
-            _pairing = pairing;
             _settings = settings;
             _certificates = certificates;
+            _access = new DeviceAccess(devices, pairing);
+            _receiver = new FileReceiver(settings);
         }
 
         public event Action? CertificateRejected;
 
         public static int CertificatePort(int port) => port < AppSettings.MaxPort ? port + 1 : port - 1;
 
-        public static string ProfileUrl(int port) => $"http://{CertificateAuthority.LocalHostName}:{CertificatePort(port)}{ProfilePath}";
+        public string CertificateLink(int port)
+        {
+            return $"http://{CertificateAuthority.LocalHostName}:{CertificatePort(port)}{ProfilePath}#{Convert.ToBase64String(_certificates.RootBytes)}";
+        }
 
         public async Task StartAsync(int port, bool allowNetwork)
         {
@@ -72,8 +62,10 @@ namespace BlueDrop
             {
                 await app.StartAsync();
             }
-            catch
+            catch (Exception e)
             {
+                AppLog.Error($"Server could not start on port {port}", e);
+                AppStatus.Report(StatusIssue.Server, string.Format(AppStatus.ServerNotStarted, port));
                 await app.DisposeAsync();
                 throw;
             }
@@ -81,6 +73,11 @@ namespace BlueDrop
             _app = app;
             _port = port;
             _allowNetwork = allowNetwork;
+
+            AppStatus.Resolve(StatusIssue.Server);
+            AppLog.Info(allowNetwork
+                ? $"Server started on port {port}, certificate download on port {CertificatePort(port)}"
+                : $"Server started on port {port}, this PC only");
         }
 
         public async Task StopAsync()
@@ -93,6 +90,8 @@ namespace BlueDrop
             await _app.StopAsync();
             await _app.DisposeAsync();
             _app = null;
+
+            AppLog.Info("Server stopped");
         }
 
         public async Task<bool> TryRestartAsync(int port, bool allowNetwork)
@@ -135,29 +134,44 @@ namespace BlueDrop
                 {
                     options.ListenLocalhost(port, UseCertificate);
                 }
-
-                options.Limits.MaxRequestBodySize = null;
             });
 
             var app = builder.Build();
             app.Use(async (context, next) =>
             {
-                if (context.Request.IsHttps || context.Request.Path == CertificatePath || context.Request.Path == ProfilePath)
+                if (!context.Request.IsHttps && context.Request.Path != CertificatePath && context.Request.Path != ProfilePath)
+                {
+                    context.Response.StatusCode = StatusCodes.Status404NotFound;
+                    return;
+                }
+
+                try
                 {
                     await next(context);
                 }
-                else
+                catch (Microsoft.AspNetCore.Http.BadHttpRequestException e)
                 {
-                    context.Response.StatusCode = StatusCodes.Status404NotFound;
+                    AppLog.Warn($"{context.Request.Method} {context.Request.Path} from {DeviceAccess.Describe(context)} rejected, {e.Message}");
+                    throw;
+                }
+                catch (Exception e) when (context.RequestAborted.IsCancellationRequested)
+                {
+                    AppLog.Warn($"{context.Request.Method} {context.Request.Path} from {DeviceAccess.Describe(context)} was cancelled by the device, {e.Message}");
+                    throw;
+                }
+                catch (Exception e)
+                {
+                    AppLog.Error($"{context.Request.Method} {context.Request.Path} from {DeviceAccess.Describe(context)} failed", e);
+                    throw;
                 }
             });
 
-            app.MapGet(CertificatePath, () => Results.Bytes(_certificates.RootBytes, CertificateContentType));
-            app.MapGet(ProfilePath, () => Results.Bytes(_certificates.CreateProfile(), ProfileContentType));
+            app.MapGet(CertificatePath, DownloadCertificate);
+            app.MapGet(ProfilePath, DownloadProfile);
             app.MapGet("/ping", () => Results.Ok());
-            app.MapPost("/pair", PairAsync);
+            app.MapPost("/pair", _access.PairAsync);
 
-            var transfers = app.MapGroup(string.Empty).AddEndpointFilter(AuthorizeAsync);
+            var transfers = app.MapGroup(string.Empty).AddEndpointFilter(_access.AuthorizeAsync);
             transfers.MapPost("/send", ReceiveAsync);
             transfers.MapGet("/get", Send);
 
@@ -175,155 +189,107 @@ namespace BlueDrop
                     && connection.RemoteEndPoint is IPEndPoint remote
                     && !IPAddress.IsLoopback(remote.Address))
                 {
-                    CertificateRejected?.Invoke();
+                    var rejectedAt = Environment.TickCount64;
+                    await Task.Delay(RejectionGrace);
+
+                    if (Volatile.Read(ref _securedAt) < rejectedAt - (long)RejectionGrace.TotalMilliseconds)
+                    {
+                        AppLog.Warn($"Certificate not trusted by {RequestInfo.Format(remote.Address)}");
+                        CertificateRejected?.Invoke();
+                    }
                 }
             });
 
-            listener.UseHttps(https => https.ServerCertificateSelector = (connection, name) =>
+            listener.UseHttps(new TlsHandshakeCallbackOptions
             {
-                if (connection is not null && string.Equals(name, CertificateAuthority.LocalHostName, StringComparison.OrdinalIgnoreCase))
+                OnConnection = context =>
                 {
-                    connection.Items[OfferedKey] = true;
-                }
+                    if (string.Equals(context.ClientHelloInfo.ServerName, CertificateAuthority.LocalHostName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        context.Connection.Items[OfferedKey] = true;
+                    }
 
-                return _certificates.ServerCertificate;
+                    return ValueTask.FromResult(new SslServerAuthenticationOptions
+                    {
+                        ServerCertificateContext = _certificates.ServerContext
+                    });
+                }
             });
 
             listener.Use(next => connection =>
             {
                 connection.Items[SecuredKey] = true;
+                Volatile.Write(ref _securedAt, Environment.TickCount64);
                 return next(connection);
             });
         }
 
-        private async ValueTask<object?> AuthorizeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+        private IResult DownloadCertificate(HttpRequest request)
         {
-            if (!IsAuthorized(context.HttpContext.Request))
-            {
-                return Results.Unauthorized();
-            }
-
-            return await next(context);
+            AppLog.Info($"Certificate downloaded by {RequestInfo.Source(request.HttpContext)}");
+            return Results.Bytes(_certificates.RootBytes, CertificateContentType);
         }
 
-        private bool IsAuthorized(HttpRequest request)
+        private IResult DownloadProfile(HttpRequest request)
         {
-            var header = request.Headers.Authorization.ToString();
-            return header.StartsWith(BearerPrefix, StringComparison.OrdinalIgnoreCase)
-                && _devices.Authorize(header[BearerPrefix.Length..].Trim());
-        }
-
-        private async Task<IResult> PairAsync(HttpRequest request)
-        {
-            var url = $"{request.Scheme}://{request.Host}";
-            var name = Environment.MachineName;
-
-            if (IsAuthorized(request))
-            {
-                return Results.Json(new { url, name, paired = true });
-            }
-
-            var key = _pairing.CompletePairing(request.Query["code"].ToString(), await ReadDeviceNameAsync(request));
-            return key is null
-                ? Results.Unauthorized()
-                : Results.Json(new { key, url, name });
-        }
-
-        private static async Task<string> ReadDeviceNameAsync(HttpRequest request)
-        {
-            var name = request.Query["name"].ToString();
-
-            if (name.Length == 0 && request.HasJsonContentType())
-            {
-                if (request.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
-                {
-                    limit.MaxRequestBodySize = MaxPairBodyBytes;
-                }
-
-                try
-                {
-                    name = (await request.ReadFromJsonAsync<PairRequest>())?.Name ?? string.Empty;
-                }
-                catch (JsonException)
-                {
-                }
-            }
-
-            name = name.Trim();
-            return name.Length > MaxDeviceNameLength ? name[..MaxDeviceNameLength] : name;
+            AppLog.Info($"Certificate profile downloaded by {RequestInfo.Source(request.HttpContext)}");
+            return Results.Bytes(_certificates.CreateProfile(), ProfileContentType);
         }
 
         private async Task<IResult> ReceiveAsync(HttpRequest request)
         {
             var contentType = (request.ContentType ?? string.Empty).Split(';')[0].Trim().ToLowerInvariant();
-            var name = SanitizeName(request.Query["name"].ToString());
+            TransferItem item;
 
             if (contentType == TextContentType)
             {
+                RequestInfo.LimitBody(request, MaxTextBytes);
+
                 using var reader = new StreamReader(request.Body, Encoding.UTF8);
-                _store.Receive(TransferItem.FromText(await reader.ReadToEndAsync()));
-            }
-            else if (ClipboardImageExtensions.TryGetValue(contentType, out var extension))
-            {
-                using var buffer = new MemoryStream();
-                await request.Body.CopyToAsync(buffer);
-
-                var data = buffer.ToArray();
-                var imageName = name.Length == 0 ? FallbackImageName + extension
-                    : Path.HasExtension(name) ? name
-                    : name + extension;
-
-                string? path = null;
-                if (_settings.SaveFiles)
-                {
-                    path = UniquePath(PrepareSaveDirectory(), imageName);
-                    await File.WriteAllBytesAsync(path, data);
-                }
-
-                _store.Receive(TransferItem.FromImage(imageName, contentType, data, path));
+                item = TransferItem.FromText(await reader.ReadToEndAsync());
             }
             else
             {
-                var prefix = new byte[RtfText.SignatureLength];
-                var prefixLength = await request.Body.ReadAtLeastAsync(prefix, prefix.Length, false);
-
-                if (RtfText.HasSignature(prefix.AsSpan(0, prefixLength)))
-                {
-                    using var buffer = new MemoryStream();
-                    buffer.Write(prefix, 0, prefixLength);
-                    await request.Body.CopyToAsync(buffer);
-                    _store.Receive(TransferItem.FromText(await RtfText.ToPlainTextAsync(buffer.ToArray())));
-                }
-                else
-                {
-                    var directory = _settings.SaveFiles ? PrepareSaveDirectory() : PrepareTempDirectory();
-                    var path = UniquePath(directory, name.Length == 0 ? FallbackFileName : name);
-
-                    await using (var file = File.Create(path))
-                    {
-                        await file.WriteAsync(prefix.AsMemory(0, prefixLength));
-                        await request.Body.CopyToAsync(file);
-                    }
-
-                    _store.Receive(ToReceivedItem(path, name));
-                }
+                RequestInfo.LimitBody(request, _settings.MaxFileMegabytes * BytesPerMegabyte);
+                item = await _receiver.ReceiveAsync(request.Body, request.Query["name"].ToString(), contentType);
             }
 
+            _store.Receive(item);
+            AppLog.Info($"Received {Describe(item)} from {DeviceAccess.Describe(request.HttpContext)}");
             return Results.Ok();
         }
 
-        private IResult Send()
+        private IResult Send(HttpRequest request)
         {
+            var context = request.HttpContext;
             var item = _store.Outgoing;
+
             if (item is null || (item.Kind == TransferKind.File && !File.Exists(item.FilePath)))
             {
+                AppLog.Info($"Nothing to send to {DeviceAccess.Describe(context)}");
                 return Results.NoContent();
             }
 
-            if (_settings.ClearAfterFetch)
+            var description = $"{Describe(item)} to {DeviceAccess.Describe(context)}";
+
+            context.Response.OnCompleted(() =>
             {
-                _store.ClearOutgoing(item);
-            }
+                if (context.RequestAborted.IsCancellationRequested)
+                {
+                    AppLog.Warn($"Sending {description} was interrupted");
+                }
+                else
+                {
+                    AppLog.Info($"Sent {description}");
+
+                    if (_settings.ClearAfterFetch)
+                    {
+                        _store.ClearOutgoing(item);
+                    }
+                }
+
+                return Task.CompletedTask;
+            });
 
             return item.Kind switch
             {
@@ -333,82 +299,14 @@ namespace BlueDrop
             };
         }
 
-        private TransferItem ToReceivedItem(string path, string name)
+        private static string Describe(TransferItem item)
         {
-            if (new FileInfo(path).Length > MaxClipboardImageBytes || ImageProbe.GetExtension(path) is not { } extension)
+            return item.Kind switch
             {
-                return TransferItem.FromFile(path);
-            }
-
-            var imageName = name.Length == 0 ? FallbackImageName + extension
-                : Path.HasExtension(name) ? name
-                : name + extension;
-            var data = File.ReadAllBytes(path);
-
-            string? imagePath = null;
-            if (!_settings.SaveFiles)
-            {
-                File.Delete(path);
-            }
-            else if (Path.GetFileName(path) != imageName)
-            {
-                imagePath = UniquePath(Path.GetDirectoryName(path)!, imageName);
-                File.Move(path, imagePath);
-            }
-            else
-            {
-                imagePath = path;
-            }
-
-            return TransferItem.FromImage(imageName, TransferItem.ContentTypeOf(imageName), data, imagePath);
-        }
-
-        private static string PrepareTempDirectory()
-        {
-            AppPaths.ClearTempDirectory();
-            Directory.CreateDirectory(AppPaths.TempDirectory);
-            return AppPaths.TempDirectory;
-        }
-
-        private string PrepareSaveDirectory()
-        {
-            var directory = string.IsNullOrWhiteSpace(_settings.SaveFolder) ? AppPaths.DefaultSaveDirectory : _settings.SaveFolder;
-
-            try
-            {
-                Directory.CreateDirectory(directory);
-                return directory;
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-            {
-                Directory.CreateDirectory(AppPaths.DefaultSaveDirectory);
-                return AppPaths.DefaultSaveDirectory;
-            }
-        }
-
-        private static string SanitizeName(string name)
-        {
-            var fileName = Path.GetFileName(name);
-            foreach (var invalid in Path.GetInvalidFileNameChars())
-            {
-                fileName = fileName.Replace(invalid, '_');
-            }
-
-            return fileName.Trim();
-        }
-
-        private static string UniquePath(string directory, string name)
-        {
-            var path = Path.Combine(directory, name);
-            var stem = Path.GetFileNameWithoutExtension(name);
-            var extension = Path.GetExtension(name);
-
-            for (var index = 1; File.Exists(path); index++)
-            {
-                path = Path.Combine(directory, $"{stem} ({index}){extension}");
-            }
-
-            return path;
+                TransferKind.Text => $"text ({item.Text!.Length} characters)",
+                TransferKind.Image => $"image \"{item.Name}\" ({item.Data!.Length} bytes)",
+                _ => $"file \"{item.Name}\" ({new FileInfo(item.FilePath!).Length} bytes)"
+            };
         }
     }
 }

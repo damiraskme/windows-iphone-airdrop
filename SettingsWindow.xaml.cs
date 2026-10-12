@@ -4,7 +4,7 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Win32;
 
-namespace BlueDrop
+namespace ClipboardPhonePc
 {
     public sealed record DeviceRow(string Id, string Name, string Details);
 
@@ -17,7 +17,6 @@ namespace BlueDrop
         private const string DateFormat = "d";
         private const string DateTimeFormat = "g";
         private const int CodeGroupLength = 3;
-        private const int ShortIdLength = 8;
 
         private readonly AppSettings _settings;
         private readonly DeviceStore _devices;
@@ -71,6 +70,7 @@ namespace BlueDrop
 
             RefreshDevices();
             RefreshPairing();
+            AppStatus.Acknowledge();
         }
 
         private string CurrentSaveFolder => string.IsNullOrWhiteSpace(_settings.SaveFolder) ? AppPaths.DefaultSaveDirectory : _settings.SaveFolder;
@@ -151,8 +151,14 @@ namespace BlueDrop
                 if ((!_settings.AllowNetwork || await Firewall.AllowAsync(port))
                     && await _server.TryRestartAsync(port, _settings.AllowNetwork))
                 {
+                    AppLog.Info($"Port changed from {_settings.Port} to {port}");
+                    AppStatus.Resolve(StatusIssue.Firewall);
                     _settings.Port = port;
                     _settings.Save();
+                }
+                else
+                {
+                    AppLog.Warn($"Port stays {_settings.Port}, could not switch to {port}");
                 }
 
                 PortBox.IsEnabled = true;
@@ -171,8 +177,15 @@ namespace BlueDrop
             if ((!allow || await Firewall.AllowAsync(_settings.Port))
                 && await _server.TryRestartAsync(_settings.Port, allow))
             {
+                AppLog.Info(allow ? "Phone connections allowed" : "Phone connections turned off");
+                AppStatus.Resolve(StatusIssue.Firewall);
                 _settings.AllowNetwork = allow;
                 _settings.Save();
+
+                if (!allow)
+                {
+                    await Firewall.RemoveAsync();
+                }
             }
 
             AllowNetworkCheckBox.IsChecked = _settings.AllowNetwork;
@@ -217,6 +230,7 @@ namespace BlueDrop
             _settings.HotkeyModifiers = modifiers;
             _settings.HotkeyKey = key;
             _settings.Save();
+            AppStatus.Resolve(StatusIssue.Hotkey);
 
             HotkeyBox.Text = HotkeyService.Format(modifiers, key);
         }
@@ -286,7 +300,7 @@ namespace BlueDrop
                 return;
             }
 
-            CertificateQrImage.Source = QrCode.Create(TransferServer.ProfileUrl(_settings.Port));
+            CertificateQrImage.Source = QrCode.Create(_server.CertificateLink(_settings.Port), true);
             FingerprintText.Text = _certificates.Fingerprint;
         }
 
@@ -295,7 +309,7 @@ namespace BlueDrop
             DeviceList.ItemsSource = _devices.GetAll()
                 .Select(device => new DeviceRow(
                     device.Id,
-                    string.IsNullOrWhiteSpace(device.Name) ? device.Id[..ShortIdLength] : device.Name,
+                    string.IsNullOrWhiteSpace(device.Name) ? device.Id[..DeviceStore.ShortIdLength] : device.Name,
                     FormatDetails(device)))
                 .ToList();
         }

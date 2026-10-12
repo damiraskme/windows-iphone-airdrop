@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Input;
 using System.Windows.Interop;
 
-namespace BlueDrop
+namespace ClipboardPhonePc
 {
     public sealed class HotkeyService : IDisposable
     {

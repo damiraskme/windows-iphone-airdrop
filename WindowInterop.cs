@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 
-namespace BlueDrop
+namespace ClipboardPhonePc
 {
     public static class WindowInterop
     {

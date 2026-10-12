@@ -1,6 +1,6 @@
 using Microsoft.Win32;
 
-namespace BlueDrop
+namespace ClipboardPhonePc
 {
     public static class AutoStart
     {

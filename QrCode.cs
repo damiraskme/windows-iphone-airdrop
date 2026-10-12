@@ -2,16 +2,16 @@ using System.IO;
 using System.Windows.Media.Imaging;
 using QRCoder;
 
-namespace BlueDrop
+namespace ClipboardPhonePc
 {
     public static class QrCode
     {
         private const int PixelsPerModule = 8;
 
-        public static BitmapSource Create(string text)
+        public static BitmapSource Create(string text, bool dense = false)
         {
             using var generator = new QRCodeGenerator();
-            using var data = generator.CreateQrCode(text, QRCodeGenerator.ECCLevel.M);
+            using var data = generator.CreateQrCode(text, dense ? QRCodeGenerator.ECCLevel.L : QRCodeGenerator.ECCLevel.M);
             using var code = new PngByteQRCode(data);
             using var stream = new MemoryStream(code.GetGraphic(PixelsPerModule));
 

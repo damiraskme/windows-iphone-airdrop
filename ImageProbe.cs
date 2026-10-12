@@ -2,10 +2,12 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Media.Imaging;
 
-namespace BlueDrop
+namespace ClipboardPhonePc
 {
     public static class ImageProbe
     {
+        private const long MaxPixels = 100_000_000;
+
         public static string? GetExtension(string path)
         {
             try
@@ -15,6 +17,12 @@ namespace BlueDrop
                 var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
                 if (decoder.Frames.Count == 0 || decoder.Frames[0].PixelWidth == 0)
                 {
+                    return null;
+                }
+
+                if ((long)decoder.Frames[0].PixelWidth * decoder.Frames[0].PixelHeight > MaxPixels)
+                {
+                    AppLog.Warn($"Image \"{Path.GetFileName(path)}\" is too large to preview, kept as file");
                     return null;
                 }
 

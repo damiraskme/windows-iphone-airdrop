@@ -2,6 +2,7 @@ using System.Formats.Asn1;
 using System.IO;
 using System.Net;
 using System.Net.NetworkInformation;
+using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -9,13 +10,14 @@ using System.Text;
 using System.Xml;
 using System.Xml.Linq;
 
-namespace BlueDrop
+namespace ClipboardPhonePc
 {
     public sealed class CertificateAuthority
     {
         private const string NameConstraintsOid = "2.5.29.30";
         private const string ServerAuthOid = "1.3.6.1.5.5.7.3.1";
-        private const string KeyNameSuffix = " Root";
+        private const string IssuerSuffix = " Issuer";
+        private const string LegacyKeySuffix = " Root";
         private const string LocalSuffix = ".local";
         private const string Localhost = "localhost";
         private const int RootYears = 20;
@@ -48,14 +50,25 @@ namespace BlueDrop
         };
 
         private readonly object _sync = new();
-        private readonly ECDsa _rootKey;
         private readonly X509Certificate2 _root;
-        private X509Certificate2? _server;
+        private readonly X509Certificate2 _issuer;
+        private readonly ECDsa _issuerKey;
+        private SslStreamCertificateContext? _server;
+        private DateTime _serverExpiresAt;
+        private string _serverAddresses = string.Empty;
         private volatile bool _serverStale;
 
         public CertificateAuthority()
         {
-            (_rootKey, _root) = LoadRoot() ?? CreateRoot();
+            var existing = Load();
+            Replaced = existing is null && File.Exists(AppPaths.CertificateFile);
+            (_root, _issuer, _issuerKey) = existing ?? Create();
+
+            if (Replaced)
+            {
+                AppStatus.Report(StatusIssue.Certificate, AppStatus.CertificateReplaced);
+            }
+
             NetworkChange.NetworkAddressChanged += (_, _) => _serverStale = true;
         }
 
@@ -63,25 +76,35 @@ namespace BlueDrop
 
         public static string LocalHostName => HostName + LocalSuffix;
 
+        public bool Replaced { get; }
+
         public byte[] RootBytes => _root.RawData;
 
         public string Fingerprint => string.Join(' ', _root.GetCertHashString(HashAlgorithmName.SHA256)
             .Chunk(FingerprintGroupLength)
             .Select(group => new string(group)));
 
-        public X509Certificate2 ServerCertificate
+        public SslStreamCertificateContext ServerContext
         {
             get
             {
                 lock (_sync)
                 {
-                    if (_server is null || _serverStale || DateTime.Now > _server.NotAfter - RenewBefore)
+                    if (_server is null || DateTime.Now > _serverExpiresAt - RenewBefore)
                     {
-                        _serverStale = false;
-                        _server = IssueServer();
+                        IssueServer(GetAddresses());
+                    }
+                    else if (_serverStale)
+                    {
+                        var addresses = GetAddresses();
+                        if (FormatAddresses(addresses) != _serverAddresses)
+                        {
+                            IssueServer(addresses);
+                        }
                     }
 
-                    return _server;
+                    _serverStale = false;
+                    return _server!;
                 }
             }
         }
@@ -136,78 +159,119 @@ namespace BlueDrop
 
         private static string RootName => $"{App.AppName} {HostName}";
 
-        private static string KeyName => App.AppName + KeyNameSuffix;
+        private static string IssuerName => RootName + IssuerSuffix;
+
+        private static string IssuerKeyName => App.AppName + IssuerSuffix;
 
         private static string[] DnsNames => [LocalHostName, HostName, Localhost];
 
-        private static (ECDsa Key, X509Certificate2 Certificate)? LoadRoot()
+        private static (X509Certificate2 Root, X509Certificate2 Issuer, ECDsa IssuerKey)? Load()
         {
-            if (!File.Exists(AppPaths.CertificateFile) || !CngKey.Exists(KeyName))
+            if (!File.Exists(AppPaths.CertificateFile) || !File.Exists(AppPaths.IssuerFile) || !CngKey.Exists(IssuerKeyName))
             {
                 return null;
             }
 
             try
             {
-                var certificate = X509CertificateLoader.LoadCertificateFromFile(AppPaths.CertificateFile);
-                var key = new ECDsaCng(CngKey.Open(KeyName));
-                using var publicKey = certificate.GetECDsaPublicKey();
+                var root = X509CertificateLoader.LoadCertificateFromFile(AppPaths.CertificateFile);
+                var issuer = X509CertificateLoader.LoadCertificateFromFile(AppPaths.IssuerFile);
+                var key = new ECDsaCng(CngKey.Open(IssuerKeyName));
+                using var publicKey = issuer.GetECDsaPublicKey();
 
                 if (publicKey is not null
-                    && certificate.GetNameInfo(X509NameType.SimpleName, false) == RootName
-                    && certificate.NotAfter > DateTime.Now.AddDays(ServerDays)
-                    && publicKey.ExportSubjectPublicKeyInfo().AsSpan().SequenceEqual(key.ExportSubjectPublicKeyInfo()))
+                    && root.GetNameInfo(X509NameType.SimpleName, false) == RootName
+                    && issuer.GetNameInfo(X509NameType.SimpleName, false) == IssuerName
+                    && issuer.NotAfter > DateTime.Now.AddDays(ServerDays)
+                    && publicKey.ExportSubjectPublicKeyInfo().AsSpan().SequenceEqual(key.ExportSubjectPublicKeyInfo())
+                    && IsIssuedBy(issuer, root))
                 {
-                    return (key, certificate);
+                    AppLog.Info($"Loaded certificate {root.GetCertHashString(HashAlgorithmName.SHA256)}");
+                    return (root, issuer, key);
                 }
 
                 key.Dispose();
-                certificate.Dispose();
+                issuer.Dispose();
+                root.Dispose();
                 return null;
             }
-            catch (CryptographicException)
+            catch (CryptographicException e)
             {
+                AppLog.Error("Could not load certificate", e);
                 return null;
             }
         }
 
-        private static (ECDsa Key, X509Certificate2 Certificate) CreateRoot()
+        private static (X509Certificate2 Root, X509Certificate2 Issuer, ECDsa IssuerKey) Create()
         {
-            if (CngKey.Exists(KeyName))
-            {
-                using var previous = CngKey.Open(KeyName);
-                previous.Delete();
-            }
+            DeleteKey(IssuerKeyName);
+            DeleteKey(App.AppName + LegacyKeySuffix);
 
-            var key = new ECDsaCng(CngKey.Create(CngAlgorithm.ECDsaP256, KeyName, new CngKeyCreationParameters
+            var now = DateTimeOffset.Now;
+            var notBefore = now - ClockSkew;
+            var notAfter = now.AddYears(RootYears);
+
+            using var rootKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+            var rootName = CreateName(RootName);
+
+            var rootRequest = new CertificateRequest(rootName, rootKey, HashAlgorithmName.SHA256);
+            rootRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, true, 1, true));
+            rootRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign, true));
+            rootRequest.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(rootRequest.PublicKey, false));
+
+            var rootSigner = X509SignatureGenerator.CreateForECDsa(rootKey);
+            var root = rootRequest.Create(rootName, rootSigner, notBefore, notAfter, CreateSerial());
+
+            var issuerKey = new ECDsaCng(CngKey.Create(CngAlgorithm.ECDsaP256, IssuerKeyName, new CngKeyCreationParameters
             {
                 ExportPolicy = CngExportPolicies.None
             }));
 
-            var subject = new X500DistinguishedNameBuilder();
-            subject.AddCommonName(RootName);
-            var name = subject.Build();
+            var issuerRequest = new CertificateRequest(CreateName(IssuerName), issuerKey, HashAlgorithmName.SHA256);
+            issuerRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, true, 0, true));
+            issuerRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign, true));
+            issuerRequest.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(issuerRequest.PublicKey, false));
+            issuerRequest.CertificateExtensions.Add(X509AuthorityKeyIdentifierExtension.CreateFromCertificate(root, true, false));
+            issuerRequest.CertificateExtensions.Add(CreateNameConstraints());
 
-            var request = new CertificateRequest(name, key, HashAlgorithmName.SHA256);
-            request.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, true, 0, true));
-            request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign, true));
-            request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, false));
-            request.CertificateExtensions.Add(CreateNameConstraints());
-
-            var now = DateTimeOffset.Now;
-            var certificate = request.Create(name, X509SignatureGenerator.CreateForECDsa(key), now - ClockSkew, now.AddYears(RootYears), CreateSerial());
+            var issuer = issuerRequest.Create(rootName, rootSigner, notBefore, notAfter, CreateSerial());
 
             Directory.CreateDirectory(AppPaths.DataDirectory);
-            File.WriteAllBytes(AppPaths.CertificateFile, certificate.RawData);
-            return (key, certificate);
+            File.WriteAllBytes(AppPaths.CertificateFile, root.RawData);
+            File.WriteAllBytes(AppPaths.IssuerFile, issuer.RawData);
+
+            AppLog.Info($"Created certificate {root.GetCertHashString(HashAlgorithmName.SHA256)}");
+            return (root, issuer, issuerKey);
         }
 
-        private X509Certificate2 IssueServer()
+        private static bool IsIssuedBy(X509Certificate2 certificate, X509Certificate2 root)
+        {
+            using var chain = new X509Chain();
+            chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+            chain.ChainPolicy.CustomTrustStore.Add(root);
+            chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+            return chain.Build(certificate);
+        }
+
+        private static void DeleteKey(string name)
+        {
+            if (CngKey.Exists(name))
+            {
+                using var key = CngKey.Open(name);
+                key.Delete();
+            }
+        }
+
+        private static X500DistinguishedName CreateName(string commonName)
+        {
+            var builder = new X500DistinguishedNameBuilder();
+            builder.AddCommonName(commonName);
+            return builder.Build();
+        }
+
+        private void IssueServer(IPAddress[] addresses)
         {
             using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-
-            var subject = new X500DistinguishedNameBuilder();
-            subject.AddCommonName(LocalHostName);
 
             var names = new SubjectAlternativeNameBuilder();
             foreach (var dnsName in DnsNames)
@@ -215,39 +279,51 @@ namespace BlueDrop
                 names.AddDnsName(dnsName);
             }
 
-            foreach (var address in GetAddresses())
+            foreach (var address in addresses)
             {
                 names.AddIpAddress(address);
             }
 
-            var request = new CertificateRequest(subject.Build(), key, HashAlgorithmName.SHA256);
+            var request = new CertificateRequest(CreateName(LocalHostName), key, HashAlgorithmName.SHA256);
             request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, true));
             request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, true));
             request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension([new Oid(ServerAuthOid)], false));
             request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, false));
-            request.CertificateExtensions.Add(X509AuthorityKeyIdentifierExtension.CreateFromCertificate(_root, true, false));
+            request.CertificateExtensions.Add(X509AuthorityKeyIdentifierExtension.CreateFromCertificate(_issuer, true, false));
             request.CertificateExtensions.Add(names.Build());
 
             var now = DateTimeOffset.Now;
             using var signed = request.Create(
-                _root.SubjectName,
-                X509SignatureGenerator.CreateForECDsa(_rootKey),
+                _issuer.SubjectName,
+                X509SignatureGenerator.CreateForECDsa(_issuerKey),
                 now - ClockSkew,
                 now.AddDays(ServerDays),
                 CreateSerial());
             using var exportable = signed.CopyWithPrivateKey(key);
 
-            return X509CertificateLoader.LoadPkcs12(exportable.Export(X509ContentType.Pfx), null);
+            var certificate = X509CertificateLoader.LoadPkcs12(exportable.Export(X509ContentType.Pfx), null);
+
+            _server = SslStreamCertificateContext.Create(certificate, [_issuer], true);
+            _serverExpiresAt = certificate.NotAfter;
+            _serverAddresses = FormatAddresses(addresses);
+
+            AppLog.Info($"Issued server certificate for {string.Join(", ", DnsNames)}, {_serverAddresses}");
         }
 
-        private static IEnumerable<IPAddress> GetAddresses()
+        private static string FormatAddresses(IPAddress[] addresses)
+        {
+            return string.Join(", ", addresses.Select(address => address.ToString()).Order());
+        }
+
+        private static IPAddress[] GetAddresses()
         {
             return NetworkInterface.GetAllNetworkInterfaces()
                 .Where(network => network.OperationalStatus == OperationalStatus.Up)
                 .SelectMany(network => network.GetIPProperties().UnicastAddresses)
                 .Select(unicast => unicast.Address)
                 .Where(address => address.AddressFamily == AddressFamily.InterNetwork && IsPermitted(address))
-                .Distinct();
+                .Distinct()
+                .ToArray();
         }
 
         private static bool IsPermitted(IPAddress address)

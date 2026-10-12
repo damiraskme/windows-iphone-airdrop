@@ -1,15 +1,18 @@
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Media.Imaging;
 
-namespace BlueDrop
+namespace ClipboardPhonePc
 {
     public static class ClipboardService
     {
         private const string ImageName = "image.png";
         private const string ImageContentType = "image/png";
         private const string PngFormat = "PNG";
+
+        private static readonly ConditionalWeakTable<TransferItem, string> ImageFiles = [];
 
         public static TransferItem? Read()
         {
@@ -94,11 +97,16 @@ namespace BlueDrop
                 return item.FilePath;
             }
 
+            if (ImageFiles.TryGetValue(item, out var existing) && File.Exists(existing))
+            {
+                return existing;
+            }
+
             try
             {
-                var path = Path.Combine(AppPaths.TempDirectory, item.Name);
-                Directory.CreateDirectory(AppPaths.TempDirectory);
+                var path = Path.Combine(AppPaths.CreateTempItemDirectory(), item.Name);
                 File.WriteAllBytes(path, item.Data!);
+                ImageFiles.AddOrUpdate(item, path);
                 return path;
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)

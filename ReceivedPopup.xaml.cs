@@ -4,7 +4,7 @@ using System.Windows.Input;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 
-namespace BlueDrop
+namespace ClipboardPhonePc
 {
     public partial class ReceivedPopup : Window
     {
@@ -12,9 +12,18 @@ namespace BlueDrop
         private const double EdgeMargin = 12;
         private const int ThumbnailPixels = 96;
 
-        private readonly TransferStore _store;
-        private readonly TransferItem _item;
+        private readonly TransferStore? _store;
+        private readonly TransferItem? _item;
         private readonly DispatcherTimer _timer;
+
+        public ReceivedPopup(string title, TimeSpan lifetime)
+        {
+            InitializeComponent();
+
+            TitleLabel.Text = title;
+            BodyLabel.Visibility = Visibility.Collapsed;
+            _timer = StartTimer(lifetime);
+        }
 
         public ReceivedPopup(TransferStore store, TransferItem item, bool hideContent, TimeSpan lifetime)
         {
@@ -45,13 +54,19 @@ namespace BlueDrop
                 Thumbnail.Visibility = Visibility.Visible;
             }
 
+            _timer = StartTimer(lifetime);
+        }
+
+        private DispatcherTimer StartTimer(TimeSpan lifetime)
+        {
             var workArea = SystemParameters.WorkArea;
             Left = workArea.Right - Width - EdgeMargin;
             Top = workArea.Bottom - Height - EdgeMargin;
 
-            _timer = new DispatcherTimer { Interval = lifetime };
-            _timer.Tick += (_, _) => Close();
-            _timer.Start();
+            var timer = new DispatcherTimer { Interval = lifetime };
+            timer.Tick += (_, _) => Close();
+            timer.Start();
+            return timer;
         }
 
         protected override void OnSourceInitialized(EventArgs e)
@@ -68,9 +83,9 @@ namespace BlueDrop
 
         private void OnClick(object sender, MouseButtonEventArgs e)
         {
-            if (ClipboardService.Write(_item))
+            if (_item is not null && ClipboardService.Write(_item))
             {
-                _store.MarkIncomingTaken();
+                _store?.MarkIncomingTaken();
             }
 
             Close();

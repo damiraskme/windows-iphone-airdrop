@@ -1,4 +1,4 @@
-namespace BlueDrop
+namespace ClipboardPhonePc
 {
     public sealed class TransferStore
     {

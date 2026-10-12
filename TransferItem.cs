@@ -1,7 +1,7 @@
 using System.IO;
 using Microsoft.AspNetCore.StaticFiles;
 
-namespace BlueDrop
+namespace ClipboardPhonePc
 {
     public enum TransferKind
     {
