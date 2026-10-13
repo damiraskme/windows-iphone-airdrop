@@ -82,6 +82,8 @@ namespace ClipboardPhonePc
         public PairedDevice? Authorize(string key)
         {
             var hash = Hash(key);
+            PairedDevice device;
+            bool isFirstUse;
 
             lock (_sync)
             {
@@ -100,7 +102,7 @@ namespace ClipboardPhonePc
                 }
 
                 var now = DateTime.UtcNow;
-                var isFirstUse = _devices[index].LastUsedAt is null;
+                isFirstUse = _devices[index].LastUsedAt is null;
                 _devices[index] = _devices[index] with { LastUsedAt = now };
 
                 if (isFirstUse || now - _lastUsedSavedAt >= LastUsedSaveInterval)
@@ -109,8 +111,15 @@ namespace ClipboardPhonePc
                     _lastUsedSavedAt = now;
                 }
 
-                return _devices[index];
+                device = _devices[index];
             }
+
+            if (isFirstUse)
+            {
+                Changed?.Invoke();
+            }
+
+            return device;
         }
 
         private string UniqueName(string name)

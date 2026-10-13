@@ -26,6 +26,8 @@ namespace ClipboardPhonePc
 
         public event Action<PairedDevice>? Paired;
 
+        public Func<string, string, Task<bool>>? Confirm { get; set; }
+
         public string? ActiveCode
         {
             get
@@ -50,7 +52,7 @@ namespace ClipboardPhonePc
             Changed?.Invoke();
         }
 
-        public string? CompletePairing(string code, string deviceName, string source)
+        public async Task<string?> CompletePairingAsync(string code, string deviceName, string source)
         {
             bool matched;
             int attemptsLeft;
@@ -87,9 +89,16 @@ namespace ClipboardPhonePc
                 return null;
             }
 
+            Changed?.Invoke();
+
+            if (Confirm is { } confirm && !await confirm(deviceName, source))
+            {
+                AppLog.Warn($"Pairing of \"{deviceName}\" from {source} was not allowed");
+                return null;
+            }
+
             var key = _devices.Add(deviceName, out var device);
             AppLog.Info($"Paired \"{device.Name}\" ({device.Id[..DeviceStore.ShortIdLength]}) from {source}");
-            Changed?.Invoke();
             Paired?.Invoke(device);
             return key;
         }

@@ -15,10 +15,6 @@ namespace ClipboardPhonePc
     public sealed class TransferServer
     {
         private const string TextContentType = "text/plain";
-        private const string CertificatePath = "/certificate.cer";
-        private const string CertificateContentType = "application/x-x509-ca-cert";
-        private const string ProfilePath = "/certificate.mobileconfig";
-        private const string ProfileContentType = "application/x-apple-aspen-config";
         private const long BytesPerMegabyte = 1024 * 1024;
         private const long MaxTextBytes = 8 * BytesPerMegabyte;
 
@@ -33,7 +29,6 @@ namespace ClipboardPhonePc
         private readonly FileReceiver _receiver;
         private WebApplication? _app;
         private int _port;
-        private bool _allowNetwork;
         private long _securedAt = long.MinValue / 2;
 
         public TransferServer(TransferStore store, DeviceStore devices, PairingService pairing, AppSettings settings, CertificateAuthority certificates)
@@ -47,37 +42,36 @@ namespace ClipboardPhonePc
 
         public event Action? CertificateRejected;
 
-        public static int CertificatePort(int port) => port < AppSettings.MaxPort ? port + 1 : port - 1;
+        public event Action<PairedDevice>? DeviceConnected;
 
-        public string CertificateLink(int port)
+        public async Task StartAsync(int port)
         {
-            return $"http://{CertificateAuthority.LocalHostName}:{CertificatePort(port)}{ProfilePath}#{Convert.ToBase64String(_certificates.RootBytes)}";
-        }
-
-        public async Task StartAsync(int port, bool allowNetwork)
-        {
-            var app = Build(port, allowNetwork);
+            var app = Build(port);
 
             try
             {
+                if (!NetworkPorts.IsFree(port))
+                {
+                    throw new IOException($"Port {port} is in use");
+                }
+
                 await app.StartAsync();
             }
             catch (Exception e)
             {
-                AppLog.Error($"Server could not start on port {port}", e);
-                AppStatus.Report(StatusIssue.Server, string.Format(AppStatus.ServerNotStarted, port));
+                var message = string.Format(AppStatus.ServerNotStarted, port);
+
+                AppLog.Error(message, e);
+                AppStatus.Report(StatusIssue.Server, message);
                 await app.DisposeAsync();
                 throw;
             }
 
             _app = app;
             _port = port;
-            _allowNetwork = allowNetwork;
 
             AppStatus.Resolve(StatusIssue.Server);
-            AppLog.Info(allowNetwork
-                ? $"Server started on port {port}, certificate download on port {CertificatePort(port)}"
-                : $"Server started on port {port}, this PC only");
+            AppLog.Info($"Server started on port {port}");
         }
 
         public async Task StopAsync()
@@ -94,57 +88,42 @@ namespace ClipboardPhonePc
             AppLog.Info("Server stopped");
         }
 
-        public async Task<bool> TryRestartAsync(int port, bool allowNetwork)
+        public async Task<bool> TryRestartAsync(int port)
         {
             var previousPort = _port;
-            var previousAllowNetwork = _allowNetwork;
             var wasRunning = _app is not null;
 
             await StopAsync();
 
             try
             {
-                await StartAsync(port, allowNetwork);
+                await StartAsync(port);
                 return true;
             }
             catch (IOException)
             {
                 if (wasRunning)
                 {
-                    await StartAsync(previousPort, previousAllowNetwork);
+                    await StartAsync(previousPort);
                 }
 
                 return false;
             }
         }
 
-        private WebApplication Build(int port, bool allowNetwork)
+        private WebApplication Build(int port)
         {
             var builder = WebApplication.CreateSlimBuilder();
             builder.Logging.ClearProviders();
             builder.WebHost.UseKestrelHttpsConfiguration();
             builder.WebHost.ConfigureKestrel(options =>
             {
-                if (allowNetwork)
-                {
-                    options.ListenAnyIP(port, UseCertificate);
-                    options.ListenAnyIP(CertificatePort(port));
-                }
-                else
-                {
-                    options.ListenLocalhost(port, UseCertificate);
-                }
+                options.ListenAnyIP(port, UseCertificate);
             });
 
             var app = builder.Build();
             app.Use(async (context, next) =>
             {
-                if (!context.Request.IsHttps && context.Request.Path != CertificatePath && context.Request.Path != ProfilePath)
-                {
-                    context.Response.StatusCode = StatusCodes.Status404NotFound;
-                    return;
-                }
-
                 try
                 {
                     await next(context);
@@ -166,14 +145,13 @@ namespace ClipboardPhonePc
                 }
             });
 
-            app.MapGet(CertificatePath, DownloadCertificate);
-            app.MapGet(ProfilePath, DownloadProfile);
             app.MapGet("/ping", () => Results.Ok());
             app.MapPost("/pair", _access.PairAsync);
 
             var transfers = app.MapGroup(string.Empty).AddEndpointFilter(_access.AuthorizeAsync);
             transfers.MapPost("/send", ReceiveAsync);
             transfers.MapGet("/get", Send);
+            transfers.MapPost("/connected", Connected);
 
             return app;
         }
@@ -224,16 +202,15 @@ namespace ClipboardPhonePc
             });
         }
 
-        private IResult DownloadCertificate(HttpRequest request)
+        private IResult Connected(HttpRequest request)
         {
-            AppLog.Info($"Certificate downloaded by {RequestInfo.Source(request.HttpContext)}");
-            return Results.Bytes(_certificates.RootBytes, CertificateContentType);
-        }
+            if (DeviceAccess.Device(request.HttpContext) is { } device)
+            {
+                AppLog.Info($"{DeviceAccess.Describe(request.HttpContext)} confirmed its connection");
+                DeviceConnected?.Invoke(device);
+            }
 
-        private IResult DownloadProfile(HttpRequest request)
-        {
-            AppLog.Info($"Certificate profile downloaded by {RequestInfo.Source(request.HttpContext)}");
-            return Results.Bytes(_certificates.CreateProfile(), ProfileContentType);
+            return Results.Ok();
         }
 
         private async Task<IResult> ReceiveAsync(HttpRequest request)

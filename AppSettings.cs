@@ -6,6 +6,8 @@ namespace ClipboardPhonePc
         public const int MaxPopupSeconds = 60;
         public const int MinPort = 1024;
         public const int MaxPort = 65535;
+        public const int MinFileMegabytes = 1;
+        public const int FileMegabytesLimit = 1024 * 1024;
 
         private const int DefaultHotkeyModifiers = 3;
         private const int DefaultHotkeyKey = 0x56;
@@ -32,9 +34,9 @@ namespace ClipboardPhonePc
 
         public int Port { get; set; } = 5055;
 
-        public bool AllowNetwork { get; set; }
-
         public int MaxFileMegabytes { get; set; } = 8192;
+
+        public bool UseAddress { get; set; }
 
         public static AppSettings Load()
         {
@@ -51,7 +53,7 @@ namespace ClipboardPhonePc
 
             settings.PopupSeconds = Math.Clamp(settings.PopupSeconds, MinPopupSeconds, MaxPopupSeconds);
             settings.Port = Math.Clamp(settings.Port, MinPort, MaxPort);
-            settings.MaxFileMegabytes = Math.Max(settings.MaxFileMegabytes, 1);
+            settings.MaxFileMegabytes = Math.Clamp(settings.MaxFileMegabytes, MinFileMegabytes, FileMegabytesLimit);
             return settings;
         }
 

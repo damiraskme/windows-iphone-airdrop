@@ -37,6 +37,11 @@ namespace ClipboardPhonePc
                 return;
             }
 
+            ShowAt(cursor, workArea);
+        }
+
+        public void ShowAt(Point cursor, Rect workArea)
+        {
             var dpi = VisualTreeHelper.GetDpi(this);
             var cursorX = cursor.X / dpi.DpiScaleX;
             var cursorY = cursor.Y / dpi.DpiScaleY;

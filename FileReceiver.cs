@@ -9,7 +9,6 @@ namespace ClipboardPhonePc
         private const string ZoneStream = ":Zone.Identifier";
         private const string ZoneContent = "[ZoneTransfer]\r\nZoneId=3\r\n";
         private const string ReservedNamePrefix = "_";
-        private const int MaxRtfBytes = 4 * 1024 * 1024;
         private const long MaxClipboardImageBytes = 64 * 1024 * 1024;
 
         private static readonly TimeSpan TempLifetime = TimeSpan.FromDays(1);
@@ -45,23 +44,6 @@ namespace ClipboardPhonePc
                 : imageExtension is not null && !Path.HasExtension(name) ? name + imageExtension
                 : name;
 
-            var start = new byte[RtfText.SignatureLength];
-            var startLength = await body.ReadAtLeastAsync(start, start.Length, false);
-            ReadOnlyMemory<byte> head = start.AsMemory(0, startLength);
-
-            if (RtfText.HasSignature(head.Span))
-            {
-                using var buffer = new MemoryStream();
-                buffer.Write(head.Span);
-
-                if (await TryBufferAsync(body, buffer, MaxRtfBytes))
-                {
-                    return TransferItem.FromText(await RtfText.ToPlainTextAsync(buffer.ToArray()));
-                }
-
-                head = buffer.ToArray();
-            }
-
             var path = string.Empty;
 
             try
@@ -69,7 +51,6 @@ namespace ClipboardPhonePc
                 await using var file = CreateUnique(_settings.SaveFiles ? PrepareSaveDirectory() : PrepareTempDirectory(), fileName);
                 path = file.Name;
 
-                await file.WriteAsync(head);
                 await body.CopyToAsync(file);
             }
             catch
@@ -109,24 +90,6 @@ namespace ClipboardPhonePc
             }
 
             return TransferItem.FromImage(imageName, TransferItem.ContentTypeOf(imageName), data, imagePath);
-        }
-
-        private static async Task<bool> TryBufferAsync(Stream source, MemoryStream buffer, int limit)
-        {
-            var chunk = new byte[81920];
-
-            while (buffer.Length <= limit)
-            {
-                var read = await source.ReadAsync(chunk);
-                if (read == 0)
-                {
-                    return true;
-                }
-
-                buffer.Write(chunk, 0, read);
-            }
-
-            return false;
         }
 
         private static void MarkDownloaded(string path)

@@ -13,6 +13,7 @@ namespace ClipboardPhonePc
         private const string PairText = "Pair";
         private const string PairedText = "Paired";
         private const string LastUsedText = "Last used";
+        private const string NotConnectedText = "Not connected yet";
         private const string RemoveQuestion = "Remove \"{0}\"?";
         private const string DateFormat = "d";
         private const string DateTimeFormat = "g";
@@ -24,12 +25,13 @@ namespace ClipboardPhonePc
         private readonly HotkeyService _hotkeys;
         private readonly TransferServer _server;
         private readonly CertificateAuthority _certificates;
+        private readonly CertificateServer _certificateServer;
         private readonly DispatcherTimer _pairingTimer;
         private readonly Action _onDevicesChanged;
         private readonly Action _onPairingChanged;
         private readonly Action _onCertificateRejected;
 
-        public SettingsWindow(AppSettings settings, DeviceStore devices, PairingService pairing, HotkeyService hotkeys, TransferServer server, CertificateAuthority certificates)
+        public SettingsWindow(AppSettings settings, DeviceStore devices, PairingService pairing, HotkeyService hotkeys, TransferServer server, CertificateAuthority certificates, CertificateServer certificateServer)
         {
             InitializeComponent();
 
@@ -39,10 +41,11 @@ namespace ClipboardPhonePc
             _hotkeys = hotkeys;
             _server = server;
             _certificates = certificates;
+            _certificateServer = certificateServer;
 
             _onDevicesChanged = () => Dispatcher.BeginInvoke(RefreshDevices);
             _onPairingChanged = () => Dispatcher.BeginInvoke(RefreshPairing);
-            _onCertificateRejected = () => Dispatcher.BeginInvoke(ShowCertificateForPairing);
+            _onCertificateRejected = () => Dispatcher.BeginInvoke(ShowCertificateForPairingAsync);
             _devices.Changed += _onDevicesChanged;
             _pairing.Changed += _onPairingChanged;
             _server.CertificateRejected += _onCertificateRejected;
@@ -63,9 +66,9 @@ namespace ClipboardPhonePc
             SaveFolderBox.Text = CurrentSaveFolder;
             ClearAfterFetchCheckBox.IsChecked = settings.ClearAfterFetch;
             AutoStartCheckBox.IsChecked = AutoStart.IsEnabled;
-            AllowNetworkCheckBox.IsChecked = settings.AllowNetwork;
             DurationBox.Text = settings.PopupSeconds.ToString();
             PortBox.Text = settings.Port.ToString();
+            MaxFileBox.Text = settings.MaxFileMegabytes.ToString();
             HotkeyBox.Text = HotkeyService.Format(settings.HotkeyModifiers, settings.HotkeyKey);
 
             RefreshDevices();
@@ -87,6 +90,7 @@ namespace ClipboardPhonePc
             _devices.Changed -= _onDevicesChanged;
             _pairing.Changed -= _onPairingChanged;
             _server.CertificateRejected -= _onCertificateRejected;
+            _ = _certificateServer.StopAsync();
             base.OnClosed(e);
         }
 
@@ -148,8 +152,7 @@ namespace ClipboardPhonePc
             {
                 PortBox.IsEnabled = false;
 
-                if ((!_settings.AllowNetwork || await Firewall.AllowAsync(port))
-                    && await _server.TryRestartAsync(port, _settings.AllowNetwork))
+                if (await Firewall.EnsureAsync(port) && await _server.TryRestartAsync(port))
                 {
                     AppLog.Info($"Port changed from {_settings.Port} to {port}");
                     AppStatus.Resolve(StatusIssue.Firewall);
@@ -166,30 +169,20 @@ namespace ClipboardPhonePc
 
             PortBox.Text = _settings.Port.ToString();
             RefreshPairing();
-            RefreshCertificate();
         }
 
-        private async void OnAllowNetworkClick(object sender, RoutedEventArgs e)
+        private void OnMaxFileCommit(object sender, KeyboardFocusChangedEventArgs e)
         {
-            var allow = AllowNetworkCheckBox.IsChecked == true;
-            AllowNetworkCheckBox.IsEnabled = false;
-
-            if ((!allow || await Firewall.AllowAsync(_settings.Port))
-                && await _server.TryRestartAsync(_settings.Port, allow))
+            if (int.TryParse(MaxFileBox.Text, out var megabytes)
+                && megabytes is >= AppSettings.MinFileMegabytes and <= AppSettings.FileMegabytesLimit
+                && megabytes != _settings.MaxFileMegabytes)
             {
-                AppLog.Info(allow ? "Phone connections allowed" : "Phone connections turned off");
-                AppStatus.Resolve(StatusIssue.Firewall);
-                _settings.AllowNetwork = allow;
+                AppLog.Info($"Max file size changed from {_settings.MaxFileMegabytes} MB to {megabytes} MB");
+                _settings.MaxFileMegabytes = megabytes;
                 _settings.Save();
-
-                if (!allow)
-                {
-                    await Firewall.RemoveAsync();
-                }
             }
 
-            AllowNetworkCheckBox.IsChecked = _settings.AllowNetwork;
-            AllowNetworkCheckBox.IsEnabled = true;
+            MaxFileBox.Text = _settings.MaxFileMegabytes.ToString();
         }
 
         private void OnHotkeyKeyDown(object sender, KeyEventArgs e)
@@ -202,6 +195,11 @@ namespace ClipboardPhonePc
                 if (key is Key.Back or Key.Delete)
                 {
                     SetHotkey(0, 0);
+                    e.Handled = true;
+                }
+                else if (key == Key.Escape)
+                {
+                    Keyboard.ClearFocus();
                     e.Handled = true;
                 }
 
@@ -235,15 +233,61 @@ namespace ClipboardPhonePc
             HotkeyBox.Text = HotkeyService.Format(modifiers, key);
         }
 
-        private void OnCertificateClick(object sender, RoutedEventArgs e)
+        private async void OnCertificateClick(object sender, RoutedEventArgs e)
         {
-            CertificatePanel.Visibility = CertificatePanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
-            RefreshCertificate();
+            if (CertificatePanel.Visibility == Visibility.Visible)
+            {
+                await HideCertificateAsync();
+                return;
+            }
+
+            await EnsureFirewallAsync(sender);
+            await ShowCertificateAsync();
         }
 
-        private void OnPairClick(object sender, RoutedEventArgs e)
+        private async Task ShowCertificateAsync()
+        {
+            if (!await _certificateServer.StartAsync(CertificateServer.PreferredPort(_settings.Port)))
+            {
+                return;
+            }
+
+            CertificateQrImage.Source = QrCode.Create(_certificateServer.Url);
+            FingerprintText.Text = _certificates.Fingerprint;
+            CertificatePanel.Visibility = Visibility.Visible;
+        }
+
+        private async Task HideCertificateAsync()
         {
             CertificatePanel.Visibility = Visibility.Collapsed;
+            await _certificateServer.StopAsync();
+        }
+
+        private async Task EnsureFirewallAsync(object sender)
+        {
+            if (sender is not UIElement button)
+            {
+                return;
+            }
+
+            button.IsEnabled = false;
+
+            if (await Firewall.EnsureAsync(_settings.Port))
+            {
+                AppStatus.Resolve(StatusIssue.Firewall);
+            }
+            else
+            {
+                AppStatus.Report(StatusIssue.Firewall, AppStatus.FirewallOutdated);
+            }
+
+            button.IsEnabled = true;
+        }
+
+        private async void OnPairClick(object sender, RoutedEventArgs e)
+        {
+            await HideCertificateAsync();
+            await EnsureFirewallAsync(sender);
             _pairingTimer.Stop();
             _pairing.BeginPairing();
             _pairingTimer.Start();
@@ -277,11 +321,15 @@ namespace ClipboardPhonePc
                 return;
             }
 
-            QrImage.Source = QrCode.Create($"https://{CertificateAuthority.LocalHostName}:{_settings.Port}/pair?code={code}");
+            var host = _settings.UseAddress && _certificates.AllowsAddresses && CertificateAuthority.PrimaryAddress is { } address
+                ? address.ToString()
+                : CertificateAuthority.LocalHostName;
+
+            QrImage.Source = QrCode.Create($"https://{host}:{_settings.Port}/pair?code={code}");
             QrBorder.Visibility = Visibility.Visible;
         }
 
-        private void ShowCertificateForPairing()
+        private async Task ShowCertificateForPairingAsync()
         {
             if (_pairing.ActiveCode is null)
             {
@@ -289,19 +337,7 @@ namespace ClipboardPhonePc
             }
 
             QrBorder.Visibility = Visibility.Collapsed;
-            CertificatePanel.Visibility = Visibility.Visible;
-            RefreshCertificate();
-        }
-
-        private void RefreshCertificate()
-        {
-            if (CertificatePanel.Visibility != Visibility.Visible)
-            {
-                return;
-            }
-
-            CertificateQrImage.Source = QrCode.Create(_server.CertificateLink(_settings.Port), true);
-            FingerprintText.Text = _certificates.Fingerprint;
+            await ShowCertificateAsync();
         }
 
         private void RefreshDevices()
@@ -319,7 +355,7 @@ namespace ClipboardPhonePc
             var paired = $"{PairedText} {device.PairedAt.ToLocalTime().ToString(DateFormat)}";
             return device.LastUsedAt is { } lastUsed
                 ? $"{paired}\n{LastUsedText} {lastUsed.ToLocalTime().ToString(DateTimeFormat)}"
-                : paired;
+                : $"{paired}\n{NotConnectedText}";
         }
     }
 }

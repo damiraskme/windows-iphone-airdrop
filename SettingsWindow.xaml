@@ -10,6 +10,10 @@
         <Style TargetType="CheckBox">
             <Setter Property="Foreground" Value="#FFFFFF" />
             <Setter Property="Margin" Value="0,0,0,12" />
+            <Setter Property="ToolTipService.ShowDuration" Value="30000" />
+        </Style>
+        <Style TargetType="DockPanel">
+            <Setter Property="ToolTipService.ShowDuration" Value="30000" />
         </Style>
         <Style TargetType="TextBox">
             <Setter Property="Background" Value="#2B2B2B" />
@@ -39,45 +43,61 @@
     </Window.Resources>
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="16">
-            <CheckBox x:Name="PopupCheckBox" Content="Show popup" Click="OnOptionClick" />
-            <CheckBox x:Name="HideContentCheckBox" Content="Hide content in popup" Click="OnOptionClick" />
-            <DockPanel Margin="0,0,0,12">
+            <CheckBox x:Name="PopupCheckBox" Content="Show popup" Click="OnOptionClick"
+                      ToolTip="Shows a small window in the corner of the screen when something arrives from a phone." />
+            <CheckBox x:Name="HideContentCheckBox" Content="Hide content in popup" Click="OnOptionClick"
+                      ToolTip="Content in popup is hidden, without showing preview." />
+            <DockPanel Margin="0,0,0,12" Background="Transparent"
+                       ToolTip="How long the popup stays on screen.">
                 <TextBox x:Name="DurationBox" DockPanel.Dock="Right" Width="80" LostKeyboardFocus="OnDurationCommit" KeyDown="OnFieldKeyDown" />
                 <TextBlock Style="{StaticResource FieldLabel}" Text="Popup duration (seconds)" />
             </DockPanel>
-            <CheckBox x:Name="AutoCopyCheckBox" Content="Copy automatically" Click="OnOptionClick" />
-            <CheckBox x:Name="SoundCheckBox" Content="Sound on receive" Click="OnOptionClick" />
-            <CheckBox x:Name="SaveFilesCheckBox" Content="Save received files" Click="OnOptionClick" />
-            <DockPanel x:Name="SaveFolderRow" Margin="0,0,0,12">
+            <CheckBox x:Name="AutoCopyCheckBox" Content="Copy automatically" Click="OnOptionClick"
+                      ToolTip="Puts whatever arrives straight onto the clipboard, replacing what was there." />
+            <CheckBox x:Name="SoundCheckBox" Content="Sound on receive" Click="OnOptionClick"
+                      ToolTip="Plays the notification sound when something arrives." />
+            <CheckBox x:Name="SaveFilesCheckBox" Content="Save received files" Click="OnOptionClick"
+                      ToolTip="Keeps received files and pictures in the folder below." />
+            <DockPanel x:Name="SaveFolderRow" Margin="0,0,0,12" Background="Transparent"
+                       ToolTip="The folder where received files and pictures are saved.">
                 <Button DockPanel.Dock="Right" Style="{StaticResource TileButton}" Padding="12,3" Margin="8,0,0,0" Click="OnBrowseClick">
                     <TextBlock Text="Browse" />
                 </Button>
                 <TextBox x:Name="SaveFolderBox" IsReadOnly="True" />
             </DockPanel>
             <CheckBox x:Name="ClearAfterFetchCheckBox" Content="Clear after fetching" Click="OnOptionClick"
-                      ToolTip="Removes the pasted item from this app once the phone has fetched it. The Windows clipboard is not changed." />
-            <DockPanel Margin="0,0,0,12">
+                      ToolTip="Removes the pasted item from this app once the phone has fetched it. The PC&apos;s clipboard is not changed." />
+            <DockPanel Margin="0,0,0,12" Background="Transparent"
+                       ToolTip="Sends the current clipboard to the app. Backspace clears it. Press Escape to cancel.">
                 <TextBox x:Name="HotkeyBox" DockPanel.Dock="Right" Width="140" IsReadOnly="True" PreviewKeyDown="OnHotkeyKeyDown" />
                 <TextBlock Style="{StaticResource FieldLabel}" Text="Paste hotkey" />
             </DockPanel>
-            <CheckBox x:Name="AutoStartCheckBox" Content="Start with Windows" Click="OnAutoStartClick" />
-            <CheckBox x:Name="AllowNetworkCheckBox" Content="Allow phone connections" Click="OnAllowNetworkClick" />
-            <DockPanel>
+            <CheckBox x:Name="AutoStartCheckBox" Content="Start with Windows" Click="OnAutoStartClick"
+                      ToolTip="Starts the app when you turn on PC." />
+            <DockPanel Margin="0,0,0,12" Background="Transparent"
+                       ToolTip="Change it only if app shows &quot;Server could not start&quot;.">
                 <TextBox x:Name="PortBox" DockPanel.Dock="Right" Width="80" LostKeyboardFocus="OnPortCommit" KeyDown="OnFieldKeyDown" />
                 <TextBlock Style="{StaticResource FieldLabel}" Text="Port" />
             </DockPanel>
+            <DockPanel Background="Transparent"
+                       ToolTip="The largest file a phone may send, in megabytes.">
+                <TextBox x:Name="MaxFileBox" DockPanel.Dock="Right" Width="80" LostKeyboardFocus="OnMaxFileCommit" KeyDown="OnFieldKeyDown" />
+                <TextBlock Style="{StaticResource FieldLabel}" Text="Max file size (MB)" />
+            </DockPanel>
             <TextBlock Text="Paired devices" Foreground="#FFFFFF" FontWeight="SemiBold" Margin="0,24,0,8" />
-            <Button Style="{StaticResource TileButton}" Height="36" Padding="0" Margin="0,0,0,8" Click="OnCertificateClick">
+            <Button Style="{StaticResource TileButton}" Height="36" Padding="0" Margin="0,0,0,8" Click="OnCertificateClick" ToolTipService.ShowDuration="30000"
+                    ToolTip="Shows a code to scan with the phone&apos;s camera. It installs the certificate the phone needs before it can connect securely. Compare the letters and numbers under the code with what the phone shows.">
                 <TextBlock Text="Install certificate" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Button>
             <StackPanel x:Name="CertificatePanel" Margin="0,0,0,8" Visibility="Collapsed">
                 <Border Background="#FFFFFF" Padding="8" HorizontalAlignment="Center">
-                    <Image x:Name="CertificateQrImage" MaxWidth="276" RenderOptions.BitmapScalingMode="HighQuality" />
+                    <Image x:Name="CertificateQrImage" Width="180" Height="180" RenderOptions.BitmapScalingMode="NearestNeighbor" />
                 </Border>
                 <TextBlock x:Name="FingerprintText" Foreground="#A0A0A0" FontSize="11" FontFamily="Consolas" TextWrapping="Wrap"
                            TextAlignment="Center" Margin="0,8,0,0" />
             </StackPanel>
-            <Button Style="{StaticResource TileButton}" Height="36" Padding="0" Click="OnPairClick">
+            <Button Style="{StaticResource TileButton}" Height="36" Padding="0" Click="OnPairClick" ToolTipService.ShowDuration="30000"
+                    ToolTip="Shows a code for the Pair shortcut to scan. It is valid for 2 minutes.">
                 <TextBlock x:Name="PairLabel" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Button>
             <Border x:Name="QrBorder" Background="#FFFFFF" Padding="8" Margin="0,8,0,0" HorizontalAlignment="Center" Visibility="Collapsed">

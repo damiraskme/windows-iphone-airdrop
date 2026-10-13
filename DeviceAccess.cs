@@ -20,6 +20,11 @@ namespace ClipboardPhonePc
             _pairing = pairing;
         }
 
+        public static PairedDevice? Device(HttpContext context)
+        {
+            return context.Items[DeviceKey] as PairedDevice;
+        }
+
         public static string Describe(HttpContext context)
         {
             return context.Items[DeviceKey] is PairedDevice device ? Describe(device) : RequestInfo.Source(context);
@@ -31,7 +36,8 @@ namespace ClipboardPhonePc
 
             if (Authenticate(http.Request) is not { } device)
             {
-                AppLog.Warn($"Rejected {http.Request.Method} {http.Request.Path} from {RequestInfo.Source(http)}, unknown key");
+                var reason = http.Request.Headers.Authorization.ToString().Trim().Length <= BearerPrefix.Trim().Length ? "no key sent" : "unknown key";
+                AppLog.Warn($"Rejected {http.Request.Method} {http.Request.Path} from {RequestInfo.Source(http)}, {reason}");
                 return Results.Unauthorized();
             }
 
@@ -51,7 +57,7 @@ namespace ClipboardPhonePc
                 return Results.Json(new { url, name, paired = true });
             }
 
-            var key = _pairing.CompletePairing(request.Query["code"].ToString(), await ReadDeviceNameAsync(request), source);
+            var key = await _pairing.CompletePairingAsync(request.Query["code"].ToString(), await ReadDeviceNameAsync(request), source);
             return key is null
                 ? Results.Unauthorized()
                 : Results.Json(new { key, url, name });

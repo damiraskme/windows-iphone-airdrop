@@ -7,10 +7,22 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
+    <Version>1.0.0</Version>
+    <ApplicationIcon>icon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="Tests\**" />
+    <None Remove="Tests\**" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(Configuration)' != 'Debug'">
+    <Page Remove="DebugWindow.xaml" />
+    <Compile Remove="DebugWindow.xaml.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -21,5 +33,9 @@
   <ItemGroup>
     <PackageReference Include="QRCoder" Version="1.6.0" />
   </ItemGroup>
+
+  <Target Name="SignPublished" AfterTargets="Publish" Condition="'$(SigningThumbprint)' != ''">
+    <Exec Command="set PSModulePath=&amp; powershell -NoProfile -ExecutionPolicy Bypass -Command &quot;$certificate = Get-Item 'Cert:\CurrentUser\My\$(SigningThumbprint)'; $result = Set-AuthenticodeSignature -FilePath '$(PublishDir)$(AssemblyName).exe' -Certificate $certificate -HashAlgorithm SHA256 -TimestampServer 'http://timestamp.digicert.com'; if (-not $result.SignerCertificate) { throw $result.StatusMessage }&quot;" />
+  </Target>
 
 </Project>

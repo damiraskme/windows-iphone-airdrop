@@ -1,3 +1,4 @@
+using System.IO;
 using Microsoft.Win32;
 
 namespace ClipboardPhonePc
@@ -12,6 +13,19 @@ namespace ClipboardPhonePc
             {
                 using var key = Registry.CurrentUser.OpenSubKey(RunKey);
                 return key?.GetValue(App.AppName) is not null;
+            }
+        }
+
+        public static void Repair()
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(RunKey, true);
+
+            if (key?.GetValue(App.AppName) is string registered
+                && Environment.ProcessPath is { } path
+                && !File.Exists(registered.Trim('"')))
+            {
+                key.SetValue(App.AppName, $"\"{path}\"");
+                AppLog.Info($"Start with Windows now points to \"{path}\"");
             }
         }
 

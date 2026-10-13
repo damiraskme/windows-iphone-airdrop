@@ -1,29 +1,30 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 namespace ClipboardPhonePc
 {
     public static class Firewall
     {
         private const string ShellCharacters = "&|^%<>\"";
+        private const string MarkerSuffix = " rule 3";
+
+        public static async Task<bool> EnsureAsync(int port)
+        {
+            return await IsCurrentAsync(port) || await AllowAsync(port);
+        }
 
         public static async Task<bool> AllowAsync(int port)
         {
             var name = App.AppName;
-            var program = ProgramPath is { } path ? $" program=\"{path}\"" : string.Empty;
+            var scope = ProgramPath is { } path ? $"program=\"{path}\" protocol=TCP" : $"protocol=TCP localport={Ports(port)}";
             var command = $"/c netsh advfirewall firewall delete rule name=\"{name}\""
-                + $" & netsh advfirewall firewall add rule name=\"{name}\" dir=in action=allow{program} protocol=TCP localport={Ports(port)} remoteip=localsubnet";
+                + $" & netsh advfirewall firewall add rule name=\"{name}\" description=\"{Marker}\" dir=in action=allow {scope}"
+                + " remoteip=localsubnet profile=private";
 
             var allowed = await RunElevatedAsync(command);
-            AppLog.Info(allowed ? $"Firewall rule set for ports {Ports(port)}" : "Firewall rule was not set");
+            AppLog.Info(allowed ? "Firewall rule set for private networks" : "Firewall rule was not set");
             return allowed;
-        }
-
-        public static async Task<bool> RemoveAsync()
-        {
-            var removed = await RunElevatedAsync($"/c netsh advfirewall firewall delete rule name=\"{App.AppName}\"");
-            AppLog.Info(removed ? "Firewall rule removed" : "Firewall rule was not removed");
-            return removed;
         }
 
         public static async Task<bool> IsCurrentAsync(int port)
@@ -46,8 +47,10 @@ namespace ClipboardPhonePc
                 await process.WaitForExitAsync();
 
                 return process.ExitCode == 0
-                    && output.Contains(Ports(port), StringComparison.Ordinal)
-                    && (ProgramPath is not { } path || output.Contains(path, StringComparison.OrdinalIgnoreCase));
+                    && output.Contains(Marker, StringComparison.Ordinal)
+                    && (ProgramPath is { } path
+                        ? output.Contains(path, StringComparison.OrdinalIgnoreCase)
+                        : Regex.IsMatch(output, $@":\s+{Ports(port)}\s*$", RegexOptions.Multiline));
             }
             catch (Win32Exception)
             {
@@ -55,11 +58,13 @@ namespace ClipboardPhonePc
             }
         }
 
+        private static string Marker => App.AppName + MarkerSuffix;
+
         private static string? ProgramPath => Environment.ProcessPath is { } path && path.IndexOfAny(ShellCharacters.ToCharArray()) < 0 ? path : null;
 
         private static string Ports(int port)
         {
-            return $"{port},{TransferServer.CertificatePort(port)}";
+            return $"{port},{CertificateServer.PreferredPort(port)}";
         }
 
         private static async Task<bool> RunElevatedAsync(string command)

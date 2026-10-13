@@ -11,11 +11,17 @@ namespace ClipboardPhonePc
 
         private const int ExtendedStyleIndex = -20;
         private const int DarkTitleBarAttribute = 20;
+        private const int AnyProcess = -1;
 
         public static void AddExtendedStyle(Window window, int style)
         {
             var handle = new WindowInteropHelper(window).Handle;
             SetWindowLongPtr(handle, ExtendedStyleIndex, GetWindowLongPtr(handle, ExtendedStyleIndex) | style);
+        }
+
+        public static void AllowForeground()
+        {
+            AllowSetForegroundWindow(AnyProcess);
         }
 
         public static void UseDarkTitleBar(Window window)
@@ -29,6 +35,9 @@ namespace ClipboardPhonePc
 
         [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
         private static extern nint SetWindowLongPtr(nint handle, int index, nint value);
+
+        [DllImport("user32.dll")]
+        private static extern bool AllowSetForegroundWindow(int processId);
 
         [DllImport("dwmapi.dll")]
         private static extern int DwmSetWindowAttribute(nint handle, int attribute, ref int value, int size);

@@ -7,6 +7,8 @@ namespace ClipboardPhonePc
     {
         private const string PairedText = "Paired with \"{0}\"";
         private const string PairedUnnamedText = "New device paired";
+        private const string ConnectedText = "\"{0}\" is connected";
+        private const string ConnectedUnnamedText = "New device is connected";
 
         private readonly TransferStore _store;
         private readonly AppSettings _settings;
@@ -51,6 +53,11 @@ namespace ClipboardPhonePc
         {
             _popup?.Close();
             Show(new ReceivedPopup(message, Lifetime));
+        }
+
+        public void ShowConnected(PairedDevice device)
+        {
+            ShowMessage(device.Name.Length == 0 ? ConnectedUnnamedText : string.Format(ConnectedText, device.Name));
         }
 
         private void ShowPaired(PairedDevice device)

@@ -6,7 +6,6 @@ Properties/PublishProfiles/
 *.user
 *.suo
 
-Local/
 *.pfx
 *.key
 *.cer

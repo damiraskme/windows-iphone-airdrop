@@ -4,7 +4,7 @@ namespace ClipboardPhonePc
 {
     public static class AppPaths
     {
-        public static string DataDirectory => Path.Combine(
+        public static string DataDirectory { get; set; } = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             App.AppName);
 
@@ -25,7 +25,7 @@ namespace ClipboardPhonePc
             "Downloads",
             App.AppName);
 
-        public static string TempDirectory => Path.Combine(Path.GetTempPath(), App.AppName);
+        public static string TempDirectory { get; set; } = Path.Combine(Path.GetTempPath(), App.AppName);
 
         public static string CreateTempItemDirectory()
         {
